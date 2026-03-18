@@ -48,6 +48,12 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# better-sqlite3 is a native addon marked as serverExternalPackages — Next.js
+# standalone does NOT bundle it, so copy it explicitly.
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/better-sqlite3 ./node_modules/better-sqlite3
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/bindings ./node_modules/bindings
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/file-uri-to-path ./node_modules/file-uri-to-path
+
 # Persist the SQLite database in a named volume so data survives restarts.
 # The /app/data directory is created here; mount a volume at runtime.
 RUN mkdir -p data && chown nextjs:nodejs data
