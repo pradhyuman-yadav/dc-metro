@@ -46,3 +46,6 @@ next-env.d.ts
 # Google OAuth tokens (never commit)
 credentials.json
 token.json
+
+# Claude Code internal directory (worktrees are nested git repos)
+.claude/
