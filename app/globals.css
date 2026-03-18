@@ -1,26 +1,26 @@
-@import "tailwindcss";
-
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html,
+body,
+#__next {
+  height: 100%;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+/*
+ * Transit tile theme — brings the ÖPNV-Karte overlay into the same silver/light
+ * palette as the CartoDB Positron base map.
+ *
+ * saturate(55%)    — mutes vivid transit colours (red, blue, green) to softer hues
+ * brightness(1.08) — lifts tile lightness to match the near-white base
+ * contrast(0.88)   — softens symbol edges so the overlay blends rather than pops
+ *
+ * Leaflet applies this class to the GridLayer container <div>, so the filter
+ * cascades to every tile <img> inside it without touching other map layers.
+ */
+.transit-tiles {
+  filter: saturate(55%) brightness(1.08) contrast(0.88);
 }

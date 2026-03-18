@@ -1,0 +1,30 @@
+# Version control
+.git
+.gitignore
+
+# Dependencies (reinstalled inside the image)
+node_modules
+
+# Next.js build output (rebuilt inside the image)
+.next
+
+# SQLite database (mounted as a volume at runtime)
+data/
+
+# Test artefacts
+coverage/
+__tests__/
+
+# Dev / editor files
+.env.local
+.env*.local
+*.log
+.DS_Store
+.vscode
+.idea
+*.swp
+*.swo
+
+# Claude / CI helpers
+.claude/
+CLAUDE.md
