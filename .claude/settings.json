@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cd /c/Users/pradh/Downloads/colaberry/train-sim-app && npm test 2>&1"
+          }
+        ]
+      }
+    ]
+  }
+}
