@@ -44,7 +44,8 @@ export default function SubwayLayer({ routes }: SubwayLayerProps) {
     if (routes.length === 0) return;
 
     layerRef.current = L.geoJSON(subwayRoutesToGeoJSON(routes), {
-      renderer: canvasRenderer,
+      // renderer is valid at runtime but absent from @types/leaflet GeoJSONOptions
+      ...(({ renderer: canvasRenderer } as unknown) as L.GeoJSONOptions),
       style: (feature) => ({
         color: feature?.properties?.colour ?? "#666666",
         weight: 4,
