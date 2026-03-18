@@ -43,8 +43,10 @@ ENV HOSTNAME=0.0.0.0
 RUN addgroup --system --gid 1001 nodejs \
  && adduser  --system --uid 1001 nextjs
 
-# Copy only what Next.js needs to run
-COPY --from=builder /app/public ./public
+# Copy only what Next.js needs to run.
+# Next.js standalone build moves public/ assets into .next/standalone/public,
+# so copy from there. Create the dir first in case it is empty.
+RUN mkdir -p ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
