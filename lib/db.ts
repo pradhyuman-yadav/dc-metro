@@ -54,18 +54,19 @@ export function getDb(): Database.Database {
     );
 
     CREATE TABLE IF NOT EXISTS train_states (
-      id         TEXT    PRIMARY KEY,
-      route_id   INTEGER NOT NULL,
-      ref        TEXT    NOT NULL,
-      colour     TEXT    NOT NULL,
-      name       TEXT    NOT NULL,
-      dist       REAL    NOT NULL,
-      direction  INTEGER NOT NULL,
-      status     TEXT    NOT NULL,
-      station    TEXT,
-      platform   TEXT    NOT NULL,
-      dwell      REAL    NOT NULL,
-      saved_at   INTEGER NOT NULL
+      id                TEXT    PRIMARY KEY,
+      route_id          INTEGER NOT NULL,
+      ref               TEXT    NOT NULL,
+      colour            TEXT    NOT NULL,
+      name              TEXT    NOT NULL,
+      dist              REAL    NOT NULL,
+      direction         INTEGER NOT NULL,
+      status            TEXT    NOT NULL,
+      station           TEXT,
+      platform          TEXT    NOT NULL,
+      dwell             REAL    NOT NULL,
+      partner_route_id  INTEGER,
+      saved_at          INTEGER NOT NULL
     );
   `);
 

@@ -122,7 +122,7 @@ export function upsertStations(stations: SubwayStation[]): void {
 interface TrainStateRow {
   id: string; route_id: number; ref: string; colour: string; name: string;
   dist: number; direction: number; status: string; station: string | null;
-  platform: string; dwell: number; saved_at: number;
+  platform: string; dwell: number; partner_route_id: number | null; saved_at: number;
 }
 
 /** Returns saved train states, or null if table is empty / stale (> 24 h). */
@@ -146,6 +146,7 @@ export function getTrainStates(): { states: TrainState[]; savedAt: number } | nu
       currentStation:    r.station ?? null,
       platform:          r.platform as "A" | "B",
       dwellRemaining:    r.dwell,
+      partnerRouteId:    r.partner_route_id ?? null,
     })),
   };
 }
@@ -156,8 +157,8 @@ export function upsertTrainStates(states: TrainState[]): void {
   const now = Math.floor(Date.now() / 1000);
   const stmt = db.prepare(
     `INSERT OR REPLACE INTO train_states
-     (id, route_id, ref, colour, name, dist, direction, status, station, platform, dwell, saved_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (id, route_id, ref, colour, name, dist, direction, status, station, platform, dwell, partner_route_id, saved_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   db.transaction(() => {
     db.prepare("DELETE FROM train_states").run();
@@ -165,7 +166,8 @@ export function upsertTrainStates(states: TrainState[]): void {
       stmt.run(
         s.id, s.routeId, s.routeRef, s.routeColour, s.routeName,
         s.distanceTravelled, s.direction, s.status,
-        s.currentStation, s.platform, s.dwellRemaining, now
+        s.currentStation, s.platform, s.dwellRemaining,
+        s.partnerRouteId ?? null, now
       );
     }
   })();
