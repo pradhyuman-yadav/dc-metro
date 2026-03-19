@@ -4,14 +4,18 @@ import { DC_CENTER, DEFAULT_ZOOM, TILE_URL, TILE_ATTRIBUTION, TILE_SUBDOMAINS, T
 
 vi.mock('leaflet/dist/leaflet.css', () => ({}));
 
-// Subway/station layers and hooks tested in their own files
+// Subway/station/train layers and hooks tested in their own files
 vi.mock('@/components/SubwayLayer', () => ({ default: () => null }));
 vi.mock('@/components/StationLayer', () => ({ default: () => null }));
+vi.mock('@/components/TrainLayer', () => ({ default: () => null }));
 vi.mock('@/hooks/useSubwayRoutes', () => ({
   useSubwayRoutes: () => ({ routes: [], loading: false, error: null }),
 }));
 vi.mock('@/hooks/useSubwayStations', () => ({
   useSubwayStations: () => ({ stations: [], loading: false, error: null }),
+}));
+vi.mock('@/hooks/useSimulation', () => ({
+  useSimulation: () => ({ trainsRef: { current: [] }, pathsMap: new Map() }),
 }));
 
 const mockTileLayer = vi.fn(() => null);

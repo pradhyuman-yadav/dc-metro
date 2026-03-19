@@ -50,10 +50,32 @@ export function buildSubwayQuery(
   );
 }
 
+/**
+ * Legacy OSM relation IDs that are superseded by newer WMATA route relations.
+ * These truncated/outdated relations cause >2 km stitching jumps and must be
+ * excluded from both route rendering and simulation:
+ *
+ * Silver Line — old relations used "Downtown Largo" as the eastern terminus;
+ * replaced by IDs 19274066 / 19274067 which correctly terminate at New Carrollton.
+ *   3031441  Downtown Largo → Ashburn  (superseded)
+ *   7919736  Ashburn → Downtown Largo  (superseded)
+ *
+ * Yellow Line — old relations used "Mount Vernon Square" as the northern terminus;
+ * replaced by IDs 20048303 / 20048304 which correctly terminate at Greenbelt.
+ *   918503   Mount Vernon Square → Huntington  (superseded)
+ *   7572166  Huntington → Mount Vernon Square  (superseded)
+ */
+export const EXCLUDED_RELATION_IDS = new Set<number>([
+  3031441, // Silver Line: Downtown Largo → Ashburn (superseded)
+  7919736, // Silver Line: Ashburn → Downtown Largo (superseded)
+  918503,  // Yellow Line: Mount Vernon Square → Huntington (superseded)
+  7572166, // Yellow Line: Huntington → Mount Vernon Square (superseded)
+]);
+
 /** Converts raw Overpass response into SubwayRoute[] */
 export function parseSubwayResponse(data: OverpassResponse): SubwayRoute[] {
   return data.elements
-    .filter((el) => el.type === "relation" && !!el.tags)
+    .filter((el) => el.type === "relation" && !!el.tags && !EXCLUDED_RELATION_IDS.has(el.id))
     .map((el) => {
       const tags = el.tags!;
       const segments: [number, number][][] = (el.members ?? [])
@@ -69,6 +91,36 @@ export function parseSubwayResponse(data: OverpassResponse): SubwayRoute[] {
       };
     })
     .filter((r) => r.segments.length > 0);
+}
+
+/**
+ * Groups loaded routes by their `ref` tag and pairs the two directional
+ * relations that make up each physical line.
+ *
+ * DC Metro OSM data has exactly 2 route relations per line — one per direction.
+ * Both share the same `ref` value (e.g. "R", "B", "S").  The pair map lets
+ * the simulation transition a train from the outbound relation to the inbound
+ * relation at the terminus, and back again, so trains never reverse direction
+ * on a one-way track.
+ *
+ * Returns a bidirectional map:  routeId → partnerRouteId
+ * Routes whose ref appears only once (unpaired) are omitted.
+ */
+export function pairRoutes(routes: SubwayRoute[]): Map<number, number> {
+  const byRef = new Map<string, SubwayRoute[]>();
+  for (const r of routes) {
+    const list = byRef.get(r.ref) ?? [];
+    list.push(r);
+    byRef.set(r.ref, list);
+  }
+  const pairs = new Map<number, number>();
+  for (const [, group] of byRef) {
+    if (group.length === 2) {
+      pairs.set(group[0].id, group[1].id);
+      pairs.set(group[1].id, group[0].id);
+    }
+  }
+  return pairs;
 }
 
 /** Fetches DC Metro subway routes from Overpass (single call for all of DC) */
@@ -152,7 +204,8 @@ export function parseStationResponse(
   }
 
   const relations = data.elements.filter(
-    (el): el is OverpassRelation => el.type === "relation"
+    (el): el is OverpassRelation =>
+      el.type === "relation" && !EXCLUDED_RELATION_IDS.has(el.id)
   );
 
   // Build map: node id → set of line colours (from parent route relations)

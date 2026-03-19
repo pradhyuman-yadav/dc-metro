@@ -9,6 +9,7 @@ import {
   fetchSubwayStations,
   DC_BBOX,
   SUBWAY_COLOUR_FALLBACK,
+  EXCLUDED_RELATION_IDS,
   type OverpassResponse,
 } from '@/lib/overpass';
 
@@ -126,6 +127,103 @@ describe('parseSubwayResponse', () => {
   it('filters out relations with no valid segments', () => {
     const routes = parseSubwayResponse(MOCK_RESPONSE);
     expect(routes.find(r => r.id === 4)).toBeUndefined();
+  });
+});
+
+// ─── EXCLUDED_RELATION_IDS ────────────────────────────────────────────────────
+
+describe('EXCLUDED_RELATION_IDS', () => {
+  it('contains the four known legacy relation IDs', () => {
+    expect(EXCLUDED_RELATION_IDS.has(3031441)).toBe(true); // Silver: Downtown Largo → Ashburn
+    expect(EXCLUDED_RELATION_IDS.has(7919736)).toBe(true); // Silver: Ashburn → Downtown Largo
+    expect(EXCLUDED_RELATION_IDS.has(918503)).toBe(true);  // Yellow: Mount Vernon Square → Huntington
+    expect(EXCLUDED_RELATION_IDS.has(7572166)).toBe(true); // Yellow: Huntington → Mount Vernon Square
+  });
+
+  it('does not exclude known-good current IDs', () => {
+    // Current Silver Line relations
+    expect(EXCLUDED_RELATION_IDS.has(19274066)).toBe(false);
+    expect(EXCLUDED_RELATION_IDS.has(19274067)).toBe(false);
+    // Current Yellow Line relations
+    expect(EXCLUDED_RELATION_IDS.has(20048303)).toBe(false);
+    expect(EXCLUDED_RELATION_IDS.has(20048304)).toBe(false);
+  });
+});
+
+describe('parseSubwayResponse — exclusion filter', () => {
+  it('filters out relations whose IDs are in EXCLUDED_RELATION_IDS', () => {
+    const response: OverpassResponse = {
+      elements: [
+        {
+          type: 'relation', id: 3031441, // Silver Line legacy
+          tags: { name: 'WMATA Silver Line', ref: 'S', route: 'subway', colour: '#919D9D' },
+          members: [
+            { type: 'way', geometry: [{ lat: 38.90, lon: -77.03 }, { lat: 38.91, lon: -77.02 }] },
+          ],
+        },
+        {
+          type: 'relation', id: 19274066, // Silver Line current — must be kept
+          tags: { name: 'WMATA Silver Line', ref: 'S', route: 'subway', colour: '#919D9D' },
+          members: [
+            { type: 'way', geometry: [{ lat: 38.90, lon: -77.03 }, { lat: 38.91, lon: -77.02 }] },
+          ],
+        },
+      ],
+    };
+    const routes = parseSubwayResponse(response);
+    expect(routes).toHaveLength(1);
+    expect(routes[0].id).toBe(19274066);
+  });
+
+  it('filters all four legacy IDs when present', () => {
+    const makeRelation = (id: number) => ({
+      type: 'relation' as const, id,
+      tags: { name: 'Test', route: 'subway', colour: '#AAAAAA' },
+      members: [
+        { type: 'way', geometry: [{ lat: 38.9, lon: -77.0 }, { lat: 38.91, lon: -77.01 }] },
+      ],
+    });
+    const response: OverpassResponse = {
+      elements: [918503, 3031441, 7572166, 7919736].map(makeRelation),
+    };
+    expect(parseSubwayResponse(response)).toHaveLength(0);
+  });
+});
+
+describe('parseStationResponse — exclusion filter', () => {
+  it('ignores colour contributions from excluded legacy relations', () => {
+    const response: OverpassResponse = {
+      elements: [
+        node(101, 38.898, -77.028, 'Metro Center'),
+        // Legacy relation referencing Metro Center — its colour must NOT appear
+        {
+          type: 'relation' as const, id: 3031441,
+          tags: { name: 'Silver Line legacy', route: 'subway', colour: '#919D9D' },
+          members: [{ type: 'node', ref: 101, role: 'stop' }],
+        } as unknown as OverpassResponse['elements'][0],
+        // Current relation referencing Metro Center — its colour MUST appear
+        {
+          type: 'relation' as const, id: 19274066,
+          tags: { name: 'Silver Line current', route: 'subway', colour: '#919D9D' },
+          members: [{ type: 'node', ref: 101, role: 'stop' }],
+        } as unknown as OverpassResponse['elements'][0],
+      ],
+    };
+    // Both relations have the same colour, so test with a distinct legacy colour
+    const response2: OverpassResponse = {
+      elements: [
+        node(101, 38.898, -77.028, 'Metro Center'),
+        {
+          type: 'relation' as const, id: 3031441,
+          tags: { name: 'Silver Line legacy', route: 'subway', colour: '#ABCDEF' }, // fake unique colour
+          members: [{ type: 'node', ref: 101, role: 'stop' }],
+        } as unknown as OverpassResponse['elements'][0],
+      ],
+    };
+    const stations = parseStationResponse(response2);
+    const mc = stations.find((s) => s.name === 'Metro Center');
+    // The fake legacy colour must not be added
+    expect(mc?.colours).not.toContain('#ABCDEF');
   });
 });
 

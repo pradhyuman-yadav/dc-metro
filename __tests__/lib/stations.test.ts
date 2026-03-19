@@ -5,14 +5,18 @@ import type { SubwayRoute, SubwayStation } from '@/lib/overpass';
 let mockRouteRows: unknown[] = [];
 let mockStationRows: unknown[] = [];
 let mockLineRows: unknown[] = [];
+let mockTrainRows: unknown[] = [];
+let mockPathRows: unknown[] = [];
 let mockMinFetched: { t: number | null } = { t: null };
 
 const mockPrepare = vi.fn((sql: string) => ({
   run: vi.fn(),
   get: vi.fn(() => mockMinFetched),
   all: vi.fn(() => {
-    if (sql.includes('subway_routes')) return mockRouteRows;
-    if (sql.includes('station_lines')) return mockLineRows;
+    if (sql.includes('route_paths'))     return mockPathRows;
+    if (sql.includes('train_states'))    return mockTrainRows;
+    if (sql.includes('subway_routes'))   return mockRouteRows;
+    if (sql.includes('station_lines'))   return mockLineRows;
     if (sql.includes('subway_stations')) return mockStationRows;
     return [];
   }),
@@ -41,8 +45,12 @@ import { isCacheStale } from '@/lib/db';
 import {
   getCachedRoutes, upsertRoutes, getRoutesFetchedAt,
   getCachedStations, upsertStations, getStationsFetchedAt,
+  getTrainStates, upsertTrainStates,
+  getCachedRoutePaths, upsertRoutePaths,
   clearAll,
 } from '@/lib/stations';
+import type { RoutePath } from '@/lib/simulation';
+import type { TrainState } from '@/lib/simulation';
 
 const NOW_SECS = Math.floor(Date.now() / 1000);
 
@@ -58,6 +66,8 @@ beforeEach(() => {
   mockRouteRows = [];
   mockStationRows = [];
   mockLineRows = [];
+  mockTrainRows = [];
+  mockPathRows = [];
   mockMinFetched = { t: null };
   vi.mocked(isCacheStale).mockReturnValue(false);
   mockPrepare.mockClear();
@@ -150,6 +160,115 @@ describe('getStationsFetchedAt', () => {
 describe('upsertStations', () => {
   it('wraps operations in a transaction', () => {
     upsertStations(FAKE_STATIONS);
+    expect(mockTransaction).toHaveBeenCalled();
+  });
+});
+
+// ── Train states ──────────────────────────────────────────────────────────────
+
+const FAKE_TRAIN: TrainState = {
+  id: 'RED-1', routeId: 1, routeRef: 'RED', routeColour: '#BF0000',
+  routeName: 'Red Line', distanceTravelled: 5.2, direction: 1,
+  status: 'moving', currentStation: null, platform: 'A', dwellRemaining: 0, partnerRouteId: null,
+};
+
+describe('getTrainStates', () => {
+  it('returns null when table is empty', () => {
+    mockTrainRows = [];
+    expect(getTrainStates()).toBeNull();
+  });
+
+  it('returns null when cache is stale', () => {
+    mockTrainRows = [{
+      id: 'RED-1', route_id: 1, ref: 'RED', colour: '#BF0000', name: 'Red Line',
+      dist: 5.2, direction: 1, status: 'moving', station: null,
+      platform: 'A', dwell: 0, saved_at: 0,
+    }];
+    vi.mocked(isCacheStale).mockReturnValue(true);
+    expect(getTrainStates()).toBeNull();
+  });
+
+  it('deserialises a saved train correctly', () => {
+    mockTrainRows = [{
+      id: 'RED-1', route_id: 1, ref: 'RED', colour: '#BF0000', name: 'Red Line',
+      dist: 5.2, direction: 1, status: 'moving', station: null,
+      platform: 'A', dwell: 0, saved_at: NOW_SECS,
+    }];
+    const result = getTrainStates();
+    expect(result).not.toBeNull();
+    expect(result!.states[0].id).toBe('RED-1');
+    expect(result!.states[0].distanceTravelled).toBe(5.2);
+    expect(result!.states[0].direction).toBe(1);
+  });
+});
+
+describe('upsertTrainStates', () => {
+  it('wraps operations in a transaction', () => {
+    upsertTrainStates([FAKE_TRAIN]);
+    expect(mockTransaction).toHaveBeenCalled();
+  });
+});
+
+// ── Route paths ───────────────────────────────────────────────────────────────
+
+const FAKE_PATH: RoutePath = {
+  routeId: 1, routeRef: 'RED', routeColour: '#BF0000', routeName: 'Red Line',
+  waypoints: [[38.9, -77.0], [38.91, -77.01]],
+  distances: [0, 1.5],
+  totalDistance: 1.5,
+  stops: [],
+};
+
+describe('getCachedRoutePaths', () => {
+  it('returns null when table is empty', () => {
+    mockPathRows = [];
+    expect(getCachedRoutePaths()).toBeNull();
+  });
+
+  it('returns null when cache is stale', () => {
+    mockPathRows = [{
+      route_id: 1, route_ref: 'RED', route_colour: '#BF0000', route_name: 'Red Line',
+      waypoints: '[]', distances: '[]', total_distance: 0, fetched_at: 0,
+    }];
+    vi.mocked(isCacheStale).mockReturnValue(true);
+    expect(getCachedRoutePaths()).toBeNull();
+  });
+
+  it('deserialises waypoints and distances from JSON', () => {
+    mockPathRows = [{
+      route_id: 1, route_ref: 'RED', route_colour: '#BF0000', route_name: 'Red Line',
+      waypoints: JSON.stringify(FAKE_PATH.waypoints),
+      distances: JSON.stringify(FAKE_PATH.distances),
+      total_distance: FAKE_PATH.totalDistance,
+      fetched_at: NOW_SECS,
+    }];
+    const result = getCachedRoutePaths();
+    expect(result).not.toBeNull();
+    expect(result![0].routeId).toBe(1);
+    expect(result![0].waypoints).toEqual(FAKE_PATH.waypoints);
+    expect(result![0].distances).toEqual(FAKE_PATH.distances);
+    expect(result![0].totalDistance).toBe(1.5);
+  });
+
+  it('returns multiple paths when several rows present', () => {
+    mockPathRows = [
+      {
+        route_id: 1, route_ref: 'RED', route_colour: '#BF0000', route_name: 'Red Line',
+        waypoints: '[]', distances: '[]', total_distance: 0, fetched_at: NOW_SECS,
+      },
+      {
+        route_id: 2, route_ref: 'BLUE', route_colour: '#0074d9', route_name: 'Blue Line',
+        waypoints: '[]', distances: '[]', total_distance: 0, fetched_at: NOW_SECS,
+      },
+    ];
+    const result = getCachedRoutePaths();
+    expect(result).toHaveLength(2);
+  });
+});
+
+describe('upsertRoutePaths', () => {
+  it('wraps operations in a transaction', () => {
+    upsertRoutePaths([FAKE_PATH]);
     expect(mockTransaction).toHaveBeenCalled();
   });
 });

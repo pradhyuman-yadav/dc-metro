@@ -1,6 +1,7 @@
 import { getDb, isCacheStale } from "@/lib/db";
 import type { SubwayRoute } from "@/lib/overpass";
 import type { SubwayStation } from "@/lib/overpass";
+import type { TrainState, RoutePath } from "@/lib/simulation";
 
 // ─── Routes ──────────────────────────────────────────────────────────────────
 
@@ -116,11 +117,121 @@ export function upsertStations(stations: SubwayStation[]): void {
   })();
 }
 
+// ─── Train states ─────────────────────────────────────────────────────────────
+
+interface TrainStateRow {
+  id: string; route_id: number; ref: string; colour: string; name: string;
+  dist: number; direction: number; status: string; station: string | null;
+  platform: string; dwell: number; saved_at: number;
+}
+
+/** Returns saved train states, or null if table is empty / stale (> 24 h). */
+export function getTrainStates(): { states: TrainState[]; savedAt: number } | null {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM train_states").all() as TrainStateRow[];
+  if (rows.length === 0) return null;
+  if (isCacheStale(rows[0].saved_at)) return null;
+
+  return {
+    savedAt: rows[0].saved_at,
+    states: rows.map((r) => ({
+      id:                r.id,
+      routeId:           r.route_id,
+      routeRef:          r.ref,
+      routeColour:       r.colour,
+      routeName:         r.name,
+      distanceTravelled: r.dist,
+      direction:         r.direction as 1 | -1,
+      status:            r.status as "moving" | "at_station",
+      currentStation:    r.station ?? null,
+      platform:          r.platform as "A" | "B",
+      dwellRemaining:    r.dwell,
+    })),
+  };
+}
+
+/** Upserts all train states in a single transaction. */
+export function upsertTrainStates(states: TrainState[]): void {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO train_states
+     (id, route_id, ref, colour, name, dist, direction, status, station, platform, dwell, saved_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  db.transaction(() => {
+    db.prepare("DELETE FROM train_states").run();
+    for (const s of states) {
+      stmt.run(
+        s.id, s.routeId, s.routeRef, s.routeColour, s.routeName,
+        s.distanceTravelled, s.direction, s.status,
+        s.currentStation, s.platform, s.dwellRemaining, now
+      );
+    }
+  })();
+}
+
+// ─── Route paths (stitched + smoothed geometry) ───────────────────────────────
+
+interface RoutePathRow {
+  route_id: number;
+  route_ref: string;
+  route_colour: string;
+  route_name: string;
+  waypoints: string;
+  distances: string;
+  total_distance: number;
+  fetched_at: number;
+}
+
+/**
+ * Returns stitched + smoothed route paths from SQLite, or null if empty/stale.
+ * Stops are NOT stored — they are recomputed from current station data on load.
+ */
+export function getCachedRoutePaths(): Omit<RoutePath, "stops">[] | null {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM route_paths").all() as RoutePathRow[];
+  if (rows.length === 0) return null;
+  if (isCacheStale(rows[0].fetched_at)) return null;
+  return rows.map((r) => ({
+    routeId:       r.route_id,
+    routeRef:      r.route_ref,
+    routeColour:   r.route_colour,
+    routeName:     r.route_name,
+    waypoints:     JSON.parse(r.waypoints) as [number, number][],
+    distances:     JSON.parse(r.distances) as number[],
+    totalDistance: r.total_distance,
+  }));
+}
+
+/** Persists stitched + smoothed route paths (stops excluded) in one transaction. */
+export function upsertRoutePaths(paths: RoutePath[]): void {
+  const db = getDb();
+  const now = Math.floor(Date.now() / 1000);
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO route_paths
+     (route_id, route_ref, route_colour, route_name, waypoints, distances, total_distance, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+  );
+  db.transaction(() => {
+    db.prepare("DELETE FROM route_paths").run();
+    for (const p of paths) {
+      stmt.run(
+        p.routeId, p.routeRef, p.routeColour, p.routeName,
+        JSON.stringify(p.waypoints), JSON.stringify(p.distances),
+        p.totalDistance, now
+      );
+    }
+  })();
+}
+
 // ─── Cache control ────────────────────────────────────────────────────────────
 
 export function clearAll(): void {
   const db = getDb();
   db.transaction(() => {
+    db.prepare("DELETE FROM train_states").run();
+    db.prepare("DELETE FROM route_paths").run();
     db.prepare("DELETE FROM station_lines").run();
     db.prepare("DELETE FROM subway_stations").run();
     db.prepare("DELETE FROM subway_routes").run();
