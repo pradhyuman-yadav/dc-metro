@@ -45,18 +45,24 @@ const EMPTY_ROUTE: SubwayRoute = {
   segments: [],
 };
 
+// Station positions are placed within ~40 m of the nearest RED_ROUTE waypoint
+// so they pass the MAX_STATION_DIST_KM (0.35 km) proximity filter.
+// RED_ROUTE waypoints: [38.90,-77.03], [38.91,-77.02], [38.92,-77.01]
 const STATION_A: SubwayStation = {
   id: 101, name: "Station A",
-  lat: 38.905, lng: -77.025,
+  lat: 38.9003, lng: -77.0297, // ~40 m from [38.90, -77.03]
   colours: ["#BF0000"],
 };
 
 const STATION_B: SubwayStation = {
   id: 102, name: "Station B",
-  lat: 38.915, lng: -77.015,
+  lat: 38.9202, lng: -77.0098, // ~30 m from [38.92, -77.01]
   colours: ["#BF0000"],
 };
 
+// Station far from the Red route — used to verify proximity exclusion.
+// SINGLE_SEG_ROUTE passes through (38.85, -77.05), so STATION_BLUE is
+// ON that route but NOT near RED_ROUTE.
 const STATION_BLUE: SubwayStation = {
   id: 103, name: "Blue Station",
   lat: 38.85, lng: -77.05,
@@ -220,16 +226,31 @@ describe("buildRoutePaths", () => {
 describe("mapStopsToRoute", () => {
   const [redPath] = buildRoutePaths([RED_ROUTE]);
 
-  it("attaches stations matching route colour", () => {
+  it("attaches stations within proximity of the route path", () => {
     const enriched = mapStopsToRoute(redPath, [STATION_A, STATION_B, STATION_BLUE]);
+    // STATION_A and STATION_B are within 350 m of a RED_ROUTE waypoint.
+    // STATION_BLUE is ~5 km away — must be excluded.
     expect(enriched.stops).toHaveLength(2);
     expect(enriched.stops.map((s) => s.stationName)).toContain("Station A");
     expect(enriched.stops.map((s) => s.stationName)).toContain("Station B");
   });
 
-  it("ignores stations on different lines", () => {
+  it("ignores stations farther than MAX_STATION_DIST_KM from the route", () => {
     const enriched = mapStopsToRoute(redPath, [STATION_BLUE]);
     expect(enriched.stops).toHaveLength(0);
+  });
+
+  it("matches regardless of station colour tag (proximity-only)", () => {
+    // Station is geographically on the Red route but has a different colour —
+    // should still be included because matching is proximity-based.
+    const wrongColourStation: SubwayStation = {
+      id: 200, name: "Colourless Station",
+      lat: 38.9003, lng: -77.0297, // same position as STATION_A
+      colours: ["#009CDE"], // Blue line colour — irrelevant for matching
+    };
+    const enriched = mapStopsToRoute(redPath, [wrongColourStation]);
+    expect(enriched.stops).toHaveLength(1);
+    expect(enriched.stops[0].stationName).toBe("Colourless Station");
   });
 
   it("stops are sorted by distanceAlong", () => {
@@ -542,39 +563,41 @@ describe("detectPathGaps", () => {
   });
 });
 
-// ─── mapStopsToRoute — case-insensitive colour matching ───────────────────────
+// ─── mapStopsToRoute — proximity boundary ─────────────────────────────────────
 
-describe("mapStopsToRoute (case-insensitive colour)", () => {
+describe("mapStopsToRoute (proximity boundary)", () => {
   const [redPath] = buildRoutePaths([RED_ROUTE]);
 
-  it("matches station whose colour is lowercase version of route colour", () => {
-    const lowercaseStation: SubwayStation = {
-      id: 200, name: "Lower Station",
-      lat: 38.905, lng: -77.025,
-      colours: ["#bf0000"], // lowercase, but route is "#BF0000"
+  it("includes a station just inside MAX_STATION_DIST_KM (≤350 m)", () => {
+    // ~300 m from waypoint [38.90, -77.03]: well within threshold
+    const nearStation: SubwayStation = {
+      id: 200, name: "Near Station",
+      lat: 38.9027, lng: -77.0300, // Δlat~300m, Δlng=0
+      colours: [],
     };
-    const enriched = mapStopsToRoute(redPath, [lowercaseStation]);
-    expect(enriched.stops).toHaveLength(1);
-    expect(enriched.stops[0].stationName).toBe("Lower Station");
-  });
-
-  it("matches station whose colour is mixed case", () => {
-    const mixedStation: SubwayStation = {
-      id: 201, name: "Mixed Station",
-      lat: 38.915, lng: -77.015,
-      colours: ["#Bf0000"],
-    };
-    const enriched = mapStopsToRoute(redPath, [mixedStation]);
+    const enriched = mapStopsToRoute(redPath, [nearStation]);
     expect(enriched.stops).toHaveLength(1);
   });
 
-  it("still ignores stations on genuinely different lines", () => {
-    const differentStation: SubwayStation = {
-      id: 202, name: "Other Station",
-      lat: 38.9, lng: -77.0,
-      colours: ["#0076A8"], // Blue Line
+  it("excludes a station just outside MAX_STATION_DIST_KM (>350 m)", () => {
+    // ~560 m from nearest waypoint — beyond 350 m threshold
+    const farStation: SubwayStation = {
+      id: 201, name: "Far Station",
+      lat: 38.905, lng: -77.025, // midpoint between waypoints, ~700m from each
+      colours: [],
     };
-    const enriched = mapStopsToRoute(redPath, [differentStation]);
+    const enriched = mapStopsToRoute(redPath, [farStation]);
     expect(enriched.stops).toHaveLength(0);
+  });
+
+  it("includes a station with no colour tag if it is geographically close", () => {
+    // station=subway nodes fetched from OSM may have no colours
+    const noColourStation: SubwayStation = {
+      id: 202, name: "No Colour Station",
+      lat: 38.9202, lng: -77.0098, // ~30 m from waypoint [38.92, -77.01]
+      colours: [],
+    };
+    const enriched = mapStopsToRoute(redPath, [noColourStation]);
+    expect(enriched.stops).toHaveLength(1);
   });
 });

@@ -164,9 +164,16 @@ export function buildStationQuery(
     `[out:json][timeout:25];` +
     `rel["type"="route"]["route"="subway"](${s},${w},${n},${e})->.routes;` +
     `(` +
+    // Nodes that are explicit stop members of route relations (any role variant)
     `node(r.routes:"stop");` +
     `node(r.routes:"stop_entry_only");` +
     `node(r.routes:"stop_exit_only");` +
+    // All nodes tagged station=subway in the bbox — this catches every WMATA
+    // station regardless of how (or whether) it appears in route relations.
+    // Some lines (Orange, Blue) store their stops as nested stop_area sub-relations
+    // or way members rather than bare node members, so the relation-based filter
+    // above misses them entirely.
+    `node["station"="subway"](${s},${w},${n},${e});` +
     `)->.stops;` +
     `(.stops;.routes;);` +
     `out body;`

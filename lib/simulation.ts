@@ -361,9 +361,31 @@ export function buildRoutePaths(routes: SubwayRoute[]): RoutePath[] {
 }
 
 /**
- * Populate `stops` on each RoutePath by finding the closest waypoint
- * to each station that is served by this route (matched via colour).
- * Returns the path with stops sorted by distanceAlong.
+ * Maximum distance (km) from a station node to the nearest route waypoint
+ * for the station to be considered on that route.
+ *
+ * 0.35 km (350 m) is generous enough to account for:
+ *   • Surface station nodes (station=subway tag) that sit at the street-level
+ *     entrance while route waypoints follow the underground track centreline.
+ *   • Minor coordinate offsets between OSM node positions and track geometry.
+ *
+ * DC Metro lines run in geographically distinct corridors, so false positives
+ * are not a concern — except on shared track segments where including the
+ * station on all sharing lines is the correct behaviour.
+ */
+const MAX_STATION_DIST_KM = 0.35;
+
+/**
+ * Populate `stops` on each RoutePath by finding every station whose nearest
+ * waypoint is within MAX_STATION_DIST_KM of the route path.
+ *
+ * Previously used colour-tag matching, which silently dropped stations when:
+ *   • Route relations stored stops as nested stop_area sub-relations or way
+ *     members rather than bare "stop"-role node members (Orange, Blue lines).
+ *   • OSM colour tags were inconsistent between station nodes and route relations.
+ *
+ * Proximity-only matching is more robust: a station belongs to a route if and
+ * only if it lies physically close to the route's stitched waypoint path.
  */
 export function mapStopsToRoute(
   path: RoutePath,
@@ -373,11 +395,7 @@ export function mapStopsToRoute(
 
   const stops: RouteStop[] = [];
 
-  const routeColourLc = path.routeColour.toLowerCase();
-
   for (const station of stations) {
-    if (!station.colours.some((c) => c.toLowerCase() === routeColourLc)) continue;
-
     let bestIdx = 0;
     let bestDist = Infinity;
     for (let i = 0; i < path.waypoints.length; i++) {
@@ -387,6 +405,9 @@ export function mapStopsToRoute(
         bestIdx = i;
       }
     }
+
+    // Only include this station if it lies on (or very near) this route's path
+    if (bestDist > MAX_STATION_DIST_KM) continue;
 
     stops.push({
       stationName: station.name,

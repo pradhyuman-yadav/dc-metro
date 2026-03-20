@@ -266,11 +266,18 @@ describe('fetchSubwayRoutes', () => {
 // ─── buildStationQuery ────────────────────────────────────────────────────────
 
 describe('buildStationQuery', () => {
-  it('finds stations via route-relation member roles, not station= tags', () => {
+  it('finds stations via route-relation member roles', () => {
     const q = buildStationQuery();
     expect(q).toContain('node(r.routes:"stop")');
     expect(q).toContain('node(r.routes:"stop_entry_only")');
     expect(q).toContain('node(r.routes:"stop_exit_only")');
+  });
+
+  it('also fetches station=subway nodes to cover lines with incomplete relations', () => {
+    // Some WMATA lines (Orange, Blue) store stops as nested stop_area sub-relations
+    // or way members rather than bare "stop"-role nodes, so relation-member queries
+    // miss them. Fetching station=subway nodes covers all WMATA stations.
+    expect(buildStationQuery()).toContain('"station"="subway"');
   });
 
   it('filters route relations to subway only', () => {
