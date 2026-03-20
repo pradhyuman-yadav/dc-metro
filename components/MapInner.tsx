@@ -82,6 +82,9 @@ export default function MapInner() {
       <MapContainer
         center={DC_CENTER}
         zoom={DEFAULT_ZOOM}
+        minZoom={9}
+        maxBounds={[[37.1, -79.4], [40.7, -74.7]]}
+        maxBoundsViscosity={1.0}
         style={{ height: "100%", width: "100%" }}
         data-testid="map-container"
       >
@@ -98,6 +101,22 @@ export default function MapInner() {
         <StationLayer stations={stations} />
         <TrainLayer trainsRef={trainsRef} pathsMap={pathsMap} />
       </MapContainer>
+
+      {/*
+       * Vignette fade overlay — dims areas beyond ~150 km from DC centre.
+       * pointer-events: none so map interactions pass through unaffected.
+       * z-index 999 keeps it above the map tiles but below UI controls (1000).
+       */}
+      <div
+        style={{
+          position: "absolute",
+          inset: 0,
+          zIndex: 999,
+          pointerEvents: "none",
+          background:
+            "radial-gradient(ellipse at center, transparent 42%, rgba(240,240,240,0.25) 60%, rgba(230,230,230,0.65) 76%, rgba(220,220,220,0.88) 88%, rgba(210,210,210,0.97) 96%, rgb(200,200,200) 100%)",
+        }}
+      />
 
       {/* ── Control buttons ─────────────────────────────────────────────────── */}
       <div style={{ position: "absolute", top: 12, right: 12, zIndex: 1000, display: "flex", gap: 6 }}>
