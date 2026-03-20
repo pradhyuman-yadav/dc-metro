@@ -621,7 +621,7 @@ export function tickSimulation(
   }
 
   // ── Per-train tick ─────────────────────────────────────────────────────────
-  const newTrains = trains.map((train) => {
+  const newTrains = trains.map((train): TrainState => {
     const path = pathsMap.get(train.routeId);
     if (!path || path.waypoints.length === 0) return train;
 
