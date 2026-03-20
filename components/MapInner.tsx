@@ -27,7 +27,7 @@ function BoundsEnforcer() {
   useEffect(() => {
     map.setMaxBounds(MAX_BOUNDS);
     map.options.maxBoundsViscosity = 1.0;
-    map.options.minZoom = 7;
+    map.options.minZoom = 10;
   }, [map]);
   return null;
 }
@@ -100,7 +100,7 @@ export default function MapInner() {
       <MapContainer
         center={DC_CENTER}
         zoom={DEFAULT_ZOOM}
-        minZoom={7}
+        minZoom={10}
         maxBounds={[[38.45, -77.6], [39.35, -76.5]]}
         maxBoundsViscosity={1.0}
         style={{ height: "100%", width: "100%" }}
