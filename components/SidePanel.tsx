@@ -235,7 +235,12 @@ export default function SidePanel({
         bonusesValue={movingCount}
         incentivesValue={dwellingCount}
         total={trains.length}
+        totalPassengers={totalAboard}
+        capacityTotal={trains.length * 1050}
       />
+
+      {/* ── Per-train detail list ─────────────────────────────────────────────── */}
+      <TrainDetailsList trains={trains} pathsMap={pathsMap} />
 
       {/* ── Network stats card ────────────────────────────────────────────────── */}
       <div style={{ ...cardStyle, padding: "14px 20px" }}>
@@ -565,6 +570,148 @@ function AboutLine({ title, detail }: { title: string; detail: string }) {
         <span style={{ fontWeight: 600 }}>{title}:</span>{" "}
         <span style={{ color: "var(--color-muted-foreground)" }}>{detail}</span>
       </span>
+    </div>
+  );
+}
+
+function TrainDetailsList({
+  trains,
+  pathsMap,
+}: {
+  trains: TrainState[];
+  pathsMap: Map<number, RoutePath>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  // Sort by routeRef then train number extracted from id
+  const sorted = [...trains].sort((a, b) => {
+    if (a.routeRef !== b.routeRef) return a.routeRef.localeCompare(b.routeRef);
+    const na = parseInt(a.id.split("-")[1] ?? "0", 10);
+    const nb = parseInt(b.id.split("-")[1] ?? "0", 10);
+    return na - nb;
+  });
+
+  return (
+    <div style={cardStyle}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center",
+          justifyContent: "space-between", background: "none", border: "none",
+          cursor: "pointer", padding: 0, marginBottom: open ? 10 : 0,
+        }}
+      >
+        <p style={{
+          fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", margin: 0,
+        }}>
+          Train Details ({trains.length})
+        </p>
+        <span style={{
+          fontSize: 14, color: "var(--color-muted-foreground)",
+          transform: open ? "rotate(90deg)" : "none",
+          transition: "transform 0.2s", display: "inline-block",
+        }}>
+          {">"}
+        </span>
+      </button>
+
+      {open && (
+        <div className="no-scrollbar" style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+          {sorted.length === 0 && (
+            <p style={{ fontSize: 11, color: "var(--color-muted-foreground)", fontStyle: "italic" }}>
+              No trains active
+            </p>
+          )}
+          {sorted.map((train) => {
+            const path = pathsMap.get(train.routeId);
+            const totalDist = path?.totalDistance ?? 1;
+            const pct = Math.round((train.distanceTravelled / totalDist) * 100);
+            const utilPct = Math.round(((train.passengers ?? 0) / 1050) * 100);
+            return (
+              <TrainRow
+                key={train.id}
+                train={train}
+                routePct={pct}
+                utilPct={utilPct}
+              />
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TrainRow({
+  train,
+  routePct,
+  utilPct,
+}: {
+  train: TrainState;
+  routePct: number;
+  utilPct: number;
+}) {
+  const isAtStation = train.status === "at_station";
+  const dwellSec = isAtStation ? Math.ceil(train.dwellRemaining / 1000) : 0;
+  const meta = LINE_META[train.routeRef];
+  const colour = meta?.colour ?? train.routeColour ?? "#888";
+
+  // Utilization colour: green → amber → red
+  const barColour =
+    utilPct >= 85 ? "#ef4444" :
+    utilPct >= 60 ? "#f59e0b" : "#22c55e";
+
+  return (
+    <div style={{
+      padding: "6px 0",
+      borderBottom: "1px solid var(--color-border)",
+    }}>
+      {/* Row 1: ID + status badge */}
+      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}>
+        <span style={{
+          flexShrink: 0, width: 8, height: 8, borderRadius: "50%", background: colour,
+        }} />
+        <span style={{ fontSize: 10, fontWeight: 700, color: "var(--color-foreground)", letterSpacing: "0.02em" }}>
+          {train.id}
+        </span>
+        <span style={{
+          marginLeft: "auto",
+          fontSize: 9, fontWeight: 600, padding: "2px 6px", borderRadius: 8,
+          background: isAtStation ? "rgba(245,158,11,0.12)" : "rgba(34,197,94,0.12)",
+          color: isAtStation ? "#b45309" : "#16a34a",
+          whiteSpace: "nowrap",
+          flexShrink: 0,
+        }}>
+          {isAtStation
+            ? `◉ ${train.currentStation ?? "Platform"}${dwellSec > 0 ? ` ${dwellSec}s` : ""}`
+            : `▶ Moving · ${train.platform === "A" ? "Inbound" : "Outbound"}`}
+        </span>
+      </div>
+
+      {/* Row 2: route progress + utilization bars */}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 6 }}>
+        {/* Route progress */}
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+            <span style={{ fontSize: 8, color: "var(--color-muted-foreground)" }}>Route</span>
+            <span style={{ fontSize: 8, color: "var(--color-muted-foreground)" }}>{routePct}%</span>
+          </div>
+          <div style={{ height: 3, borderRadius: 2, overflow: "hidden", background: "var(--color-muted, rgba(0,0,0,0.08))" }}>
+            <div style={{ height: "100%", width: `${routePct}%`, background: colour, borderRadius: 2 }} />
+          </div>
+        </div>
+        {/* Passenger utilization */}
+        <div>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 2 }}>
+            <span style={{ fontSize: 8, color: "var(--color-muted-foreground)" }}>Load</span>
+            <span style={{ fontSize: 8, color: "var(--color-muted-foreground)" }}>{train.passengers ?? 0} pax</span>
+          </div>
+          <div style={{ height: 3, borderRadius: 2, overflow: "hidden", background: "var(--color-muted, rgba(0,0,0,0.08))" }}>
+            <div style={{ height: "100%", width: `${utilPct}%`, background: barColour, borderRadius: 2 }} />
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
