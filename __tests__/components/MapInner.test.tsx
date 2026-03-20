@@ -3,6 +3,12 @@ import { render, screen } from '@testing-library/react';
 import { DC_CENTER, DEFAULT_ZOOM, TILE_URL, TILE_ATTRIBUTION, TILE_SUBDOMAINS, TILE_MAX_ZOOM } from '@/components/MapInner';
 
 vi.mock('leaflet/dist/leaflet.css', () => ({}));
+vi.mock('leaflet', () => ({
+  default: {
+    latLngBounds: () => ({}),
+    latLng: (lat: number, lng: number) => ({ lat, lng }),
+  },
+}));
 
 // Subway/station/train layers and hooks tested in their own files
 vi.mock('@/components/SubwayLayer', () => ({ default: () => null }));
@@ -26,6 +32,10 @@ const mockMapContainer = vi.fn(({ children }: { children: React.ReactNode }) => 
 vi.mock('react-leaflet', () => ({
   MapContainer: (props: unknown) => mockMapContainer(props),
   TileLayer: (props: unknown) => mockTileLayer(props),
+  useMap: () => ({
+    setMaxBounds: vi.fn(),
+    options: {},
+  }),
 }));
 
 const { default: MapInner } = await import('@/components/MapInner');

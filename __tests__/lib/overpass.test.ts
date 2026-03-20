@@ -48,8 +48,8 @@ describe('buildSubwayQuery', () => {
 
   it('includes the DC bbox by default', () => {
     const q = buildSubwayQuery();
-    expect(q).toContain('38.79');
-    expect(q).toContain('-77.25');
+    expect(q).toContain('38.76');
+    expect(q).toContain('-77.55');
   });
 
   it('accepts a custom bbox', () => {
@@ -286,8 +286,8 @@ describe('buildStationQuery', () => {
 
   it('includes the DC bbox by default', () => {
     const q = buildStationQuery();
-    expect(q).toContain('38.79');
-    expect(q).toContain('-77.25');
+    expect(q).toContain('38.76');
+    expect(q).toContain('-77.55');
   });
 
   it('accepts a custom bbox', () => {
