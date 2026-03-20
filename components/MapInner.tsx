@@ -1,6 +1,7 @@
 "use client";
-import { useState, useMemo } from "react";
-import { MapContainer, TileLayer } from "react-leaflet";
+import { useState, useMemo, useEffect } from "react";
+import { MapContainer, TileLayer, useMap } from "react-leaflet";
+import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { useSubwayRoutes } from "@/hooks/useSubwayRoutes";
 import { useSubwayStations } from "@/hooks/useSubwayStations";
@@ -13,6 +14,23 @@ import { detectPathGaps } from "@/lib/simulation";
 
 export const DC_CENTER: [number, number] = [38.9072, -77.0369];
 export const DEFAULT_ZOOM = 12;
+
+// ~500 km radius from DC center
+const MAX_BOUNDS = L.latLngBounds(
+  L.latLng(34.4, -82.9),
+  L.latLng(43.4, -71.3)
+);
+
+/** Imperatively applies maxBounds after the Leaflet map has mounted. */
+function BoundsEnforcer() {
+  const map = useMap();
+  useEffect(() => {
+    map.setMaxBounds(MAX_BOUNDS);
+    map.options.maxBoundsViscosity = 1.0;
+    map.options.minZoom = 7;
+  }, [map]);
+  return null;
+}
 
 export const TILE_URL =
   "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png";
@@ -82,12 +100,13 @@ export default function MapInner() {
       <MapContainer
         center={DC_CENTER}
         zoom={DEFAULT_ZOOM}
-        minZoom={9}
-        maxBounds={[[37.1, -79.4], [40.7, -74.7]]}
+        minZoom={7}
+        maxBounds={[[34.4, -82.9], [43.4, -71.3]]}
         maxBoundsViscosity={1.0}
         style={{ height: "100%", width: "100%" }}
         data-testid="map-container"
       >
+        <BoundsEnforcer />
         <TileLayer
           attribution={TILE_ATTRIBUTION}
           url={TILE_URL}
