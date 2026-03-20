@@ -123,6 +123,7 @@ interface TrainStateRow {
   id: string; route_id: number; ref: string; colour: string; name: string;
   dist: number; direction: number; status: string; station: string | null;
   platform: string; dwell: number; partner_route_id: number | null; saved_at: number;
+  passengers: number;
 }
 
 /** Returns saved train states, or null if table is empty / stale (> 24 h). */
@@ -147,6 +148,7 @@ export function getTrainStates(): { states: TrainState[]; savedAt: number } | nu
       platform:          r.platform as "A" | "B",
       dwellRemaining:    r.dwell,
       partnerRouteId:    r.partner_route_id ?? null,
+      passengers:        r.passengers ?? 0,
     })),
   };
 }
@@ -157,8 +159,8 @@ export function upsertTrainStates(states: TrainState[]): void {
   const now = Math.floor(Date.now() / 1000);
   const stmt = db.prepare(
     `INSERT OR REPLACE INTO train_states
-     (id, route_id, ref, colour, name, dist, direction, status, station, platform, dwell, partner_route_id, saved_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+     (id, route_id, ref, colour, name, dist, direction, status, station, platform, dwell, partner_route_id, passengers, saved_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   );
   db.transaction(() => {
     db.prepare("DELETE FROM train_states").run();
@@ -167,7 +169,7 @@ export function upsertTrainStates(states: TrainState[]): void {
         s.id, s.routeId, s.routeRef, s.routeColour, s.routeName,
         s.distanceTravelled, s.direction, s.status,
         s.currentStation, s.platform, s.dwellRemaining,
-        s.partnerRouteId ?? null, now
+        s.partnerRouteId ?? null, s.passengers ?? 0, now
       );
     }
   })();
@@ -227,6 +229,43 @@ export function upsertRoutePaths(paths: RoutePath[]): void {
   })();
 }
 
+// ─── Station passengers ───────────────────────────────────────────────────────
+
+interface StationPassengerRow {
+  station_name: string;
+  capacity: number;
+  current_passengers: number;
+  updated_at: number;
+}
+
+/** Returns all saved station passenger states. */
+export function getStationPassengers(): Map<string, { capacity: number; current: number }> {
+  const db = getDb();
+  const rows = db.prepare("SELECT * FROM station_passengers").all() as StationPassengerRow[];
+  const result = new Map<string, { capacity: number; current: number }>();
+  for (const r of rows) {
+    result.set(r.station_name, { capacity: r.capacity, current: r.current_passengers });
+  }
+  return result;
+}
+
+/** Upserts station passenger states in a single transaction. */
+export function upsertStationPassengers(
+  entries: Array<{ stationName: string; capacity: number; current: number }>
+): void {
+  const db = getDb();
+  const now = Date.now() / 1000;
+  const stmt = db.prepare(
+    `INSERT OR REPLACE INTO station_passengers (station_name, capacity, current_passengers, updated_at)
+     VALUES (?, ?, ?, ?)`
+  );
+  db.transaction(() => {
+    for (const e of entries) {
+      stmt.run(e.stationName, e.capacity, Math.floor(e.current), now);
+    }
+  })();
+}
+
 // ─── Cache control ────────────────────────────────────────────────────────────
 
 export function clearAll(): void {
@@ -237,5 +276,6 @@ export function clearAll(): void {
     db.prepare("DELETE FROM station_lines").run();
     db.prepare("DELETE FROM subway_stations").run();
     db.prepare("DELETE FROM subway_routes").run();
+    db.prepare("DELETE FROM station_passengers").run();
   })();
 }

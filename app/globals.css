@@ -5,6 +5,23 @@
   --background-image-square-pattern-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 800 800'%3E%3Cg stroke-width='3.5' stroke='hsla(215, 16%25, 47%25, 1.00)' fill='none'%3E%3Crect width='400' height='400' x='0' y='0'%3E%3C/rect%3E%3Crect width='400' height='400' x='400' y='0'%3E%3C/rect%3E%3Crect width='400' height='400' x='800' y='0'%3E%3C/rect%3E%3Crect width='400' height='400' x='0' y='400'%3E%3C/rect%3E%3Crect width='400' height='400' x='400' y='400'%3E%3C/rect%3E%3Crect width='400' height='400' x='800' y='400'%3E%3C/rect%3E%3Crect width='400' height='400' x='0' y='800'%3E%3C/rect%3E%3Crect width='400' height='400' x='400' y='800'%3E%3C/rect%3E%3Crect width='400' height='400' x='800' y='800'%3E%3C/rect%3E%3C/g%3E%3C/svg%3E");
 }
 
+/* ── Design token CSS variables ───────────────────────────────────────────── */
+:root {
+  --color-foreground: #111827;
+  --color-muted: rgba(0, 0, 0, 0.06);
+  --color-muted-foreground: #6b7280;
+  --color-border: rgba(0, 0, 0, 0.1);
+  --card: rgba(255, 255, 255, 0.95);
+}
+
+.dark {
+  --color-foreground: #f4f4f5;
+  --color-muted: rgba(255, 255, 255, 0.07);
+  --color-muted-foreground: #a1a1aa;
+  --color-border: rgba(255, 255, 255, 0.1);
+  --card: rgba(24, 24, 27, 0.97);
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -30,4 +47,31 @@ body,
  */
 .transit-tiles {
   filter: saturate(55%) brightness(1.08) contrast(0.88);
+}
+
+/*
+ * Station progress ring — clockwise fill animation.
+ *
+ * Leaflet renders CircleMarker as an SVG <path> element.
+ * By default SVG circles start their stroke at the 3 o'clock position (right).
+ * rotate(-90deg) around the element's own bounding box shifts the start
+ * to 12 o'clock so stroke-dasharray fills clockwise from the top.
+ *
+ * transform-box: fill-box  — rotate around the element's own centre, not the SVG origin.
+ * transition               — smoothly animates load changes every ~1 s snapshot.
+ */
+.station-ring {
+  transform-box: fill-box;
+  transform-origin: center;
+  transform: rotate(-90deg);
+  transition: stroke-dasharray 1.2s ease-out, stroke 0.6s ease;
+}
+
+/* Hide scrollbars while preserving scroll functionality */
+.no-scrollbar {
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* IE/Edge */
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none; /* Chrome/Safari/Opera */
 }

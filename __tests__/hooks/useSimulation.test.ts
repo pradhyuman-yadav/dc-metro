@@ -19,14 +19,14 @@ const mockTrain: TrainState = {
   id: "RED-1", routeId: 1, routeRef: "RED", routeColour: "#BF0000",
   routeName: "Red Line", distanceTravelled: 0.3,
   direction: 1, status: "moving", currentStation: null,
-  platform: "A", dwellRemaining: 0, partnerRouteId: null,
+  platform: "A", dwellRemaining: 0, partnerRouteId: null, passengers: 0,
 };
 
 vi.mock("@/lib/simulation", () => ({
   buildRoutePaths: vi.fn(() => [mockPath]),
   mapStopsToRoute: vi.fn((p: RoutePath) => p),
   initTrains: vi.fn(() => [mockTrain]),
-  tickSimulation: vi.fn((trains: TrainState[]) => trains),
+  tickSimulation: vi.fn((trains: TrainState[]) => ({ trains, stationDeltas: new Map() })),
   DEFAULT_CONFIG: {
     trainsPerRoute: 4,
     speedKmPerMs: 0.04,
@@ -42,7 +42,12 @@ beforeEach(() => {
   // Simulate empty saved states so seed() falls through to fresh initTrains
   vi.stubGlobal(
     "fetch",
-    vi.fn().mockResolvedValue({ ok: true, json: async () => ({ states: [] }) })
+    vi.fn((url: string) => {
+      if (typeof url === "string" && url.includes("station-passengers")) {
+        return Promise.resolve({ ok: true, json: async () => ({ entries: [] }) });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({ states: [] }) });
+    })
   );
 });
 
@@ -94,5 +99,21 @@ describe("useSimulation", () => {
   it("does not start the RAF loop when routes are empty", () => {
     renderHook(() => useSimulation([], []));
     expect(requestAnimationFrame).not.toHaveBeenCalled();
+  });
+
+  it("returns stationPassengers as a Map", () => {
+    const { result } = renderHook(() => useSimulation([ROUTE], [STATION]));
+    expect(result.current.stationPassengers).toBeInstanceOf(Map);
+  });
+
+  it("returns surgeEvents as an array", () => {
+    const { result } = renderHook(() => useSimulation([ROUTE], [STATION]));
+    expect(Array.isArray(result.current.surgeEvents)).toBe(true);
+  });
+
+  it("exposes addTrain and removeTrain as functions", () => {
+    const { result } = renderHook(() => useSimulation([ROUTE], [STATION]));
+    expect(typeof result.current.addTrain).toBe("function");
+    expect(typeof result.current.removeTrain).toBe("function");
   });
 });

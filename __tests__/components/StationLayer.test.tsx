@@ -8,8 +8,12 @@ import { SUBWAY_COLOUR_FALLBACK } from '@/lib/overpass';
 let capturedZoomHandler: ((e: { target: { getZoom: () => number } }) => void) | null = null;
 
 vi.mock('react-leaflet', () => ({
-  CircleMarker: vi.fn(({ children, fillColor }: { children: React.ReactNode; fillColor: string }) => (
-    <div data-testid="circle-marker" data-fill={fillColor}>{children}</div>
+  // Support both direct fillColor prop and pathOptions object (react-leaflet v4 style)
+  CircleMarker: vi.fn(({ children, pathOptions }: {
+    children?: React.ReactNode;
+    pathOptions?: { fillColor?: string; color?: string };
+  }) => (
+    <div data-testid="circle-marker" data-fill={pathOptions?.fillColor ?? pathOptions?.color}>{children}</div>
   )),
   Tooltip: vi.fn(({ children }: { children: React.ReactNode }) => <span>{children}</span>),
   useMapEvents: vi.fn((handlers: { zoom?: (e: { target: { getZoom: () => number } }) => void }) => {
@@ -30,50 +34,50 @@ beforeEach(() => {
 });
 
 describe('StationLayer', () => {
-  it('renders two CircleMarkers per station (outer ring + inner dot)', async () => {
+  it('renders three CircleMarkers per station (bg ring + progress arc + inner dot)', async () => {
     const { default: StationLayer } = await import('@/components/StationLayer');
-    render(<StationLayer stations={SAMPLE_STATIONS} />);
-    // 3 stations × 2 markers each = 6 total
-    expect(screen.getAllByTestId('circle-marker')).toHaveLength(6);
+    render(<StationLayer stations={SAMPLE_STATIONS} stationPassengers={new Map()} />);
+    // 3 stations × 3 markers each = 9 total
+    expect(screen.getAllByTestId('circle-marker')).toHaveLength(9);
   });
 
   it('renders nothing when stations array is empty', async () => {
     const { default: StationLayer } = await import('@/components/StationLayer');
-    const { container } = render(<StationLayer stations={[]} />);
+    const { container } = render(<StationLayer stations={[]} stationPassengers={new Map()} />);
     expect(container.firstChild).toBeNull();
   });
 
-  it('outer ring markers are all black (#111111)', async () => {
+  it('progress arc markers use green (#22c55e) at 0% load', async () => {
     const { default: StationLayer } = await import('@/components/StationLayer');
-    render(<StationLayer stations={SAMPLE_STATIONS} />);
+    render(<StationLayer stations={SAMPLE_STATIONS} stationPassengers={new Map()} />);
     const markers = screen.getAllByTestId('circle-marker');
-    // First N markers are the outer rings (painted first)
-    expect(markers[0].dataset.fill).toBe('#111111');
-    expect(markers[1].dataset.fill).toBe('#111111');
-    expect(markers[2].dataset.fill).toBe('#111111');
+    // Pass 1 = bg rings (indices 0-2), Pass 2 = progress arcs (indices 3-5)
+    expect(markers[3].dataset.fill).toBe('#22c55e');
+    expect(markers[4].dataset.fill).toBe('#22c55e');
+    expect(markers[5].dataset.fill).toBe('#22c55e');
   });
 
   it('inner dot markers use colours[0] as fillColor', async () => {
     const { default: StationLayer } = await import('@/components/StationLayer');
-    render(<StationLayer stations={SAMPLE_STATIONS} />);
+    render(<StationLayer stations={SAMPLE_STATIONS} stationPassengers={new Map()} />);
     const markers = screen.getAllByTestId('circle-marker');
-    // Inner dots follow the outer rings (indices N..2N-1)
-    expect(markers[3].dataset.fill).toBe('#e51636');
-    expect(markers[4].dataset.fill).toBe('#0074d9');
+    // Pass 3 = inner dots (indices 6-8)
+    expect(markers[6].dataset.fill).toBe('#e51636');
+    expect(markers[7].dataset.fill).toBe('#0074d9');
   });
 
   it('falls back to SUBWAY_COLOUR_FALLBACK when colours is empty', async () => {
     const { default: StationLayer } = await import('@/components/StationLayer');
-    render(<StationLayer stations={SAMPLE_STATIONS} />);
+    render(<StationLayer stations={SAMPLE_STATIONS} stationPassengers={new Map()} />);
     const markers = screen.getAllByTestId('circle-marker');
-    // Ghost Station is the third inner dot (index 5)
-    expect(markers[5].dataset.fill).toBe(SUBWAY_COLOUR_FALLBACK);
+    // Ghost Station is the third inner dot (index 8)
+    expect(markers[8].dataset.fill).toBe(SUBWAY_COLOUR_FALLBACK);
   });
 
-  it('renders a Tooltip with station name', async () => {
+  it('renders a Tooltip containing station name', async () => {
     const { default: StationLayer } = await import('@/components/StationLayer');
-    render(<StationLayer stations={[SAMPLE_STATIONS[0]]} />);
-    expect(screen.getByText('Metro Center')).toBeInTheDocument();
+    render(<StationLayer stations={[SAMPLE_STATIONS[0]]} stationPassengers={new Map()} />);
+    expect(screen.getByText(/Metro Center/)).toBeInTheDocument();
   });
 });
 

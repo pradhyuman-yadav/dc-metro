@@ -97,6 +97,21 @@ export interface TrainState {
    * null for routes with no directional pair (falls back to in-path bouncing).
    */
   partnerRouteId: number | null;
+  /** Current number of passengers aboard (0..1050) */
+  passengers: number;
+}
+
+/** Current passenger state for one station */
+export interface StationPassengerState {
+  capacity: number;
+  current: number;
+}
+
+/** Result returned by tickSimulation */
+export interface TickResult {
+  trains: TrainState[];
+  /** Net passenger delta per station this tick (positive = more passengers waiting) */
+  stationDeltas: Map<string, number>;
 }
 
 export interface SimulationConfig {
@@ -446,15 +461,16 @@ export function initTrains(
   for (const path of paths) {
     if (path.waypoints.length === 0 || path.totalDistance === 0) continue;
 
-    const spacing = path.totalDistance / config.trainsPerRoute;
     const partnerRouteId = routePairs.get(path.routeId) ?? null;
 
     for (let i = 0; i < config.trainsPerRoute; i++) {
-      const distanceTravelled = i * spacing;
-      // Paired routes: always forward on their directional track.
-      // Unpaired routes: alternate direction so they cover both directions.
+      // Paired routes: always start at position 0, always travel forward.
+      // Unpaired routes: alternate — even index at terminus A (pos 0, dir +1),
+      //                              odd  index at terminus B (pos max, dir -1).
       const direction: TrainDirection =
         partnerRouteId !== null ? 1 : i % 2 === 0 ? 1 : -1;
+      const distanceTravelled =
+        partnerRouteId !== null || i % 2 === 0 ? 0 : path.totalDistance;
 
       trains.push({
         id: `${path.routeId}-${i + 1}`,
@@ -469,6 +485,7 @@ export function initTrains(
         platform: direction === 1 ? "A" : "B",
         dwellRemaining: 0,
         partnerRouteId,
+        passengers: 0,
       });
     }
   }
@@ -551,12 +568,27 @@ const HARD_STOP_KM = 0.020;
  *    Within SLOW_ZONE_KM of the next stop the train decelerates linearly.
  *    Arrival is triggered when within AT_STATION_KM (10 m) of the platform.
  */
+const TRAIN_CAPACITY = 1050; // 6 cars × 175 passengers
+
 export function tickSimulation(
   trains: TrainState[],
   pathsMap: Map<number, RoutePath>,
   dt: number,
-  config: SimulationConfig = DEFAULT_CONFIG
-): TrainState[] {
+  config: SimulationConfig = DEFAULT_CONFIG,
+  stationPassengers: Map<string, StationPassengerState> = new Map(),
+  surgeMultipliers: Map<string, number> = new Map()
+): TickResult {
+  // ── Station passenger accumulation deltas ──────────────────────────────────
+  const stationDeltas = new Map<string, number>();
+
+  for (const [name, sp] of stationPassengers) {
+    const multiplier = surgeMultipliers.get(name) ?? 1;
+    // Accumulation rate: capacity * 0.0005 passengers/second * multiplier
+    // Slower build-up — stations fill over 30+ minutes naturally
+    const delta = sp.capacity * 0.0005 * multiplier * (dt / 1000);
+    stationDeltas.set(name, delta);
+  }
+
   // ── Pre-compute indices (built from the PREVIOUS frame's state) ────────────
 
   // Position index for no-overtaking:
@@ -585,7 +617,7 @@ export function tickSimulation(
   }
 
   // ── Per-train tick ─────────────────────────────────────────────────────────
-  return trains.map((train) => {
+  const newTrains = trains.map((train) => {
     const path = pathsMap.get(train.routeId);
     if (!path || path.waypoints.length === 0) return train;
 
@@ -593,8 +625,11 @@ export function tickSimulation(
     if (train.status === "at_station") {
       const remaining = train.dwellRemaining - dt;
       if (remaining > 0) return { ...train, dwellRemaining: remaining };
+      // Departing — passengers alight (30% leave)
+      const alighting = Math.floor(train.passengers * 0.30);
       return {
         ...train,
+        passengers:     Math.max(0, train.passengers - alighting),
         status:         "moving",
         currentStation: null,
         dwellRemaining: 0,
@@ -702,8 +737,23 @@ export function tickSimulation(
 
       const stopIndex  = path.stops.indexOf(nextStop);
       const isTerminus = stopIndex === 0 || stopIndex === path.stops.length - 1;
+
+      // Boarding: pick up passengers waiting at this station
+      const sp = stationPassengers.get(nextStop.stationName);
+      const boarding = sp
+        ? Math.min(Math.floor(sp.current), TRAIN_CAPACITY - train.passengers)
+        : 0;
+      if (boarding > 0) {
+        // Record that passengers are boarding (negative delta = fewer waiting)
+        stationDeltas.set(
+          nextStop.stationName,
+          (stationDeltas.get(nextStop.stationName) ?? 0) - boarding
+        );
+      }
+
       return {
         ...train,
+        passengers:        Math.min(TRAIN_CAPACITY, train.passengers + boarding),
         distanceTravelled: nextStop.distanceAlong,
         direction:         dir,
         status:            "at_station",
@@ -720,6 +770,8 @@ export function tickSimulation(
       platform:          dir === 1 ? "A" : "B",
     };
   });
+
+  return { trains: newTrains, stationDeltas };
 }
 
 /**
@@ -822,4 +874,47 @@ function findNextStop(
     }
     return null;
   }
+}
+
+// ─── Metro service hours ──────────────────────────────────────────────────────
+
+/**
+ * WMATA service hours (simplified):
+ *   Mon–Thu, Sun : 05:00 – 24:00
+ *   Fri–Sat      : 05:00 – 01:00 next day
+ *
+ * Returns true when trains should be running.
+ * Uses EST/EDT (America/New_York).
+ */
+export function isMetroInService(): boolean {
+  try {
+    const now = new Date();
+    const parts = now.toLocaleString("en-US", {
+      timeZone: "America/New_York",
+      hour: "2-digit",
+      minute: "2-digit",
+      weekday: "short",
+      hour12: false,
+    }).split(", ");
+    // parts[0] = "Mon" | "Tue" etc., parts[1] = "HH:MM"
+    const day = parts[0]; // e.g. "Fri"
+    const [hStr] = (parts[1] ?? "12:00").split(":");
+    const h = parseInt(hStr, 10);
+    const isLateSvc = day === "Fri" || day === "Sat"; // extended to 1 AM
+    if (h < 5) return isLateSvc && h < 1; // late-night extension
+    return h < 24;
+  } catch {
+    return true; // fail-open: keep running if locale parsing breaks
+  }
+}
+
+/**
+ * Human-readable next service transition time (for UI display).
+ */
+export function getMetroServiceLabel(): { active: boolean; label: string } {
+  const active = isMetroInService();
+  return {
+    active,
+    label: active ? "In Service" : "Out of Service · resumes 05:00 EST",
+  };
 }

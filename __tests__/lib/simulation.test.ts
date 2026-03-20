@@ -356,33 +356,33 @@ describe("tickSimulation", () => {
     routeColour: "#BF0000", routeName: "Red Line",
     distanceTravelled: 0.1, direction: 1,
     status: "moving", currentStation: null,
-    platform: "A", dwellRemaining: 0, partnerRouteId: null,
+    platform: "A", dwellRemaining: 0, partnerRouteId: null, passengers: 0,
   };
 
   it("advances distanceTravelled for a moving train", () => {
     const cfg = { ...DEFAULT_CONFIG, speedKmPerMs: 0.01 };
-    const [next] = tickSimulation([movingTrain], pathsMap, 10, cfg);
+    const [next] = tickSimulation([movingTrain], pathsMap, 10, cfg).trains;
     expect(next.distanceTravelled).toBeGreaterThan(movingTrain.distanceTravelled);
   });
 
   it("does not exceed totalDistance", () => {
     const farTrain: TrainState = { ...movingTrain, distanceTravelled: path.totalDistance - 0.001 };
     const cfg = { ...DEFAULT_CONFIG, speedKmPerMs: 1 };
-    const [next] = tickSimulation([farTrain], pathsMap, 100, cfg);
+    const [next] = tickSimulation([farTrain], pathsMap, 100, cfg).trains;
     expect(next.distanceTravelled).toBeLessThanOrEqual(path.totalDistance);
   });
 
   it("bounces direction at the end of the line", () => {
     const atEnd: TrainState = { ...movingTrain, distanceTravelled: path.totalDistance - 0.001, direction: 1 };
     const cfg = { ...DEFAULT_CONFIG, speedKmPerMs: 1 };
-    const [next] = tickSimulation([atEnd], pathsMap, 100, cfg);
+    const [next] = tickSimulation([atEnd], pathsMap, 100, cfg).trains;
     expect(next.direction).toBe(-1);
   });
 
   it("bounces direction at the start of the line", () => {
     const atStart: TrainState = { ...movingTrain, distanceTravelled: 0.001, direction: -1 };
     const cfg = { ...DEFAULT_CONFIG, speedKmPerMs: 1 };
-    const [next] = tickSimulation([atStart], pathsMap, 100, cfg);
+    const [next] = tickSimulation([atStart], pathsMap, 100, cfg).trains;
     expect(next.direction).toBe(1);
   });
 
@@ -392,7 +392,7 @@ describe("tickSimulation", () => {
       status: "at_station", currentStation: "Station A",
       dwellRemaining: 1000,
     };
-    const [next] = tickSimulation([dwellingTrain], pathsMap, 200, DEFAULT_CONFIG);
+    const [next] = tickSimulation([dwellingTrain], pathsMap, 200, DEFAULT_CONFIG).trains;
     expect(next.dwellRemaining).toBe(800);
     expect(next.status).toBe("at_station");
   });
@@ -403,7 +403,7 @@ describe("tickSimulation", () => {
       status: "at_station", currentStation: "Station A",
       dwellRemaining: 100,
     };
-    const [next] = tickSimulation([dwellingTrain], pathsMap, 200, DEFAULT_CONFIG);
+    const [next] = tickSimulation([dwellingTrain], pathsMap, 200, DEFAULT_CONFIG).trains;
     expect(next.status).toBe("moving");
     expect(next.currentStation).toBeNull();
     expect(next.dwellRemaining).toBe(0);
@@ -412,7 +412,7 @@ describe("tickSimulation", () => {
   it("returns the same count of trains", () => {
     const trains = initTrains([path], { ...DEFAULT_CONFIG, trainsPerRoute: 3 });
     const result = tickSimulation(trains, pathsMap, 16, DEFAULT_CONFIG);
-    expect(result).toHaveLength(3);
+    expect(result.trains).toHaveLength(3);
   });
 });
 
@@ -423,7 +423,7 @@ describe("getTrainSegmentBearing", () => {
     id: "t1", routeId: 1, routeRef: "RED", routeColour: "#BF0000",
     routeName: "Red Line", distanceTravelled: dist,
     direction: dir, status: "moving", currentStation: null,
-    platform: "A", dwellRemaining: 0, partnerRouteId: null,
+    platform: "A", dwellRemaining: 0, partnerRouteId: null, passengers: 0,
   });
 
   it("returns 0 for a path with fewer than 2 waypoints", () => {

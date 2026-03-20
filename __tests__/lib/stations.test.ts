@@ -7,17 +7,19 @@ let mockStationRows: unknown[] = [];
 let mockLineRows: unknown[] = [];
 let mockTrainRows: unknown[] = [];
 let mockPathRows: unknown[] = [];
+let mockPassengerRows: unknown[] = [];
 let mockMinFetched: { t: number | null } = { t: null };
 
 const mockPrepare = vi.fn((sql: string) => ({
   run: vi.fn(),
   get: vi.fn(() => mockMinFetched),
   all: vi.fn(() => {
-    if (sql.includes('route_paths'))     return mockPathRows;
-    if (sql.includes('train_states'))    return mockTrainRows;
-    if (sql.includes('subway_routes'))   return mockRouteRows;
-    if (sql.includes('station_lines'))   return mockLineRows;
-    if (sql.includes('subway_stations')) return mockStationRows;
+    if (sql.includes('route_paths'))         return mockPathRows;
+    if (sql.includes('train_states'))        return mockTrainRows;
+    if (sql.includes('station_passengers'))  return mockPassengerRows;
+    if (sql.includes('subway_routes'))       return mockRouteRows;
+    if (sql.includes('station_lines'))       return mockLineRows;
+    if (sql.includes('subway_stations'))     return mockStationRows;
     return [];
   }),
 }));
@@ -47,6 +49,7 @@ import {
   getCachedStations, upsertStations, getStationsFetchedAt,
   getTrainStates, upsertTrainStates,
   getCachedRoutePaths, upsertRoutePaths,
+  getStationPassengers, upsertStationPassengers,
   clearAll,
 } from '@/lib/stations';
 import type { RoutePath } from '@/lib/simulation';
@@ -68,6 +71,7 @@ beforeEach(() => {
   mockLineRows = [];
   mockTrainRows = [];
   mockPathRows = [];
+  mockPassengerRows = [];
   mockMinFetched = { t: null };
   vi.mocked(isCacheStale).mockReturnValue(false);
   mockPrepare.mockClear();
@@ -170,6 +174,7 @@ const FAKE_TRAIN: TrainState = {
   id: 'RED-1', routeId: 1, routeRef: 'RED', routeColour: '#BF0000',
   routeName: 'Red Line', distanceTravelled: 5.2, direction: 1,
   status: 'moving', currentStation: null, platform: 'A', dwellRemaining: 0, partnerRouteId: null,
+  passengers: 0,
 };
 
 describe('getTrainStates', () => {
@@ -192,13 +197,14 @@ describe('getTrainStates', () => {
     mockTrainRows = [{
       id: 'RED-1', route_id: 1, ref: 'RED', colour: '#BF0000', name: 'Red Line',
       dist: 5.2, direction: 1, status: 'moving', station: null,
-      platform: 'A', dwell: 0, saved_at: NOW_SECS,
+      platform: 'A', dwell: 0, saved_at: NOW_SECS, passengers: 42,
     }];
     const result = getTrainStates();
     expect(result).not.toBeNull();
     expect(result!.states[0].id).toBe('RED-1');
     expect(result!.states[0].distanceTravelled).toBe(5.2);
     expect(result!.states[0].direction).toBe(1);
+    expect(result!.states[0].passengers).toBe(42);
   });
 });
 
@@ -269,6 +275,34 @@ describe('getCachedRoutePaths', () => {
 describe('upsertRoutePaths', () => {
   it('wraps operations in a transaction', () => {
     upsertRoutePaths([FAKE_PATH]);
+    expect(mockTransaction).toHaveBeenCalled();
+  });
+});
+
+// ── Station passengers ────────────────────────────────────────────────────────
+
+describe('getStationPassengers', () => {
+  it('returns an empty map when table is empty', () => {
+    mockPassengerRows = [];
+    const result = getStationPassengers();
+    expect(result.size).toBe(0);
+  });
+
+  it('returns station passenger data keyed by station name', () => {
+    mockPassengerRows = [
+      { station_name: 'Metro Center', capacity: 1200, current_passengers: 600, updated_at: NOW_SECS },
+      { station_name: 'Bethesda', capacity: 800, current_passengers: 100, updated_at: NOW_SECS },
+    ];
+    const result = getStationPassengers();
+    expect(result.size).toBe(2);
+    expect(result.get('Metro Center')).toEqual({ capacity: 1200, current: 600 });
+    expect(result.get('Bethesda')).toEqual({ capacity: 800, current: 100 });
+  });
+});
+
+describe('upsertStationPassengers', () => {
+  it('wraps operations in a transaction', () => {
+    upsertStationPassengers([{ stationName: 'Metro Center', capacity: 1200, current: 400 }]);
     expect(mockTransaction).toHaveBeenCalled();
   });
 });

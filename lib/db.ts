@@ -68,7 +68,23 @@ export function getDb(): Database.Database {
       partner_route_id  INTEGER,
       saved_at          INTEGER NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS station_passengers (
+      station_name       TEXT    PRIMARY KEY,
+      capacity           INTEGER NOT NULL,
+      current_passengers INTEGER NOT NULL DEFAULT 0,
+      updated_at         REAL    NOT NULL
+    );
   `);
+
+  // Safe migration: add passengers column to existing train_states tables
+  try {
+    db.prepare(
+      "ALTER TABLE train_states ADD COLUMN passengers INTEGER NOT NULL DEFAULT 0"
+    ).run();
+  } catch {
+    // Column already exists — safe to ignore
+  }
 
   return db;
 }

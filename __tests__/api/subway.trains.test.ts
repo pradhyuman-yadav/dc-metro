@@ -14,6 +14,7 @@ const FAKE_TRAIN: TrainState = {
   platform: "A",
   dwellRemaining: 0,
   partnerRouteId: null,
+  passengers: 0,
 };
 
 const { mockGetTrainStates, mockUpsertTrainStates } = vi.hoisted(() => ({

@@ -27,7 +27,14 @@ vi.mock('@/hooks/useSubwayStations', () => ({
   useSubwayStations: () => ({ stations: [], loading: false, error: null }),
 }));
 vi.mock('@/hooks/useSimulation', () => ({
-  useSimulation: () => ({ trainsRef: { current: [] }, pathsMap: new Map() }),
+  useSimulation: () => ({
+    trainsRef: { current: [] },
+    pathsMap: new Map(),
+    stationPassengers: new Map(),
+    surgeEvents: [],
+    addTrain: vi.fn(),
+    removeTrain: vi.fn(),
+  }),
 }));
 
 const mockTileLayer = vi.fn(() => null);

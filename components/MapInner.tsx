@@ -1,5 +1,5 @@
 "use client";
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useMemo, useEffect, useRef, useState } from "react";
 import { MapContainer, TileLayer, useMap } from "react-leaflet";
 import L from "leaflet";
 import { useTheme } from "next-themes";
@@ -69,7 +69,8 @@ export default function MapInner() {
   const { stations, loading: stationsLoading, error: stationsError } = useSubwayStations();
   const { resolvedTheme } = useTheme();
 
-  const { trainsRef, pathsMap } = useSimulation(routes, stations);
+  const { trainsRef, pathsMap, stationPassengers, surgeEvents, addTrain, removeTrain } =
+    useSimulation(routes, stations);
 
   const anyLoading = loading || stationsLoading;
 
@@ -82,9 +83,7 @@ export default function MapInner() {
 
   const isDark = resolvedTheme === "dark";
 
-  // Stations panel state
-  const [showStations, setShowStations] = useState(false);
-
+  // Stations by line data (passed to side panel)
   const stationsByLine = useMemo(() => {
     const byRef = new Map<string, { colour: string; stops: { stationName: string; distanceAlong: number }[] }>();
     for (const path of pathsMap.values()) {
@@ -122,7 +121,7 @@ export default function MapInner() {
           maxZoom={TILE_MAX_ZOOM}
         />
         <SubwayLayer routes={routes} />
-        <StationLayer stations={stations} />
+        <StationLayer stations={stations} stationPassengers={stationPassengers} />
         <TrainLayer trainsRef={trainsRef} pathsMap={pathsMap} />
       </MapContainer>
 
@@ -139,108 +138,16 @@ export default function MapInner() {
         }}
       />
 
-      {/* ── Left side panel ─────────────────────────────────────────────────── */}
-      <SidePanel trains={trainSnapshot} pathsMap={pathsMap} />
-
-      {/* ── Stations button (top-right) ──────────────────────────────────────── */}
-      <div style={{ position: "absolute", top: 12, right: 12, zIndex: 1000 }}>
-        <button
-          data-testid="stations-toggle"
-          onClick={() => setShowStations((v) => !v)}
-          style={{
-            background: showStations
-              ? (isDark ? "#14532d" : "#14532d")
-              : (isDark ? "rgba(24,24,27,0.92)" : "rgba(255,255,255,0.92)"),
-            color: showStations ? "#fff" : (isDark ? "#e4e4e7" : "#333"),
-            border: `1px solid ${isDark ? "rgba(255,255,255,0.12)" : "rgba(0,0,0,0.18)"}`,
-            borderRadius: 8,
-            padding: "5px 12px",
-            fontSize: 12,
-            fontWeight: 600,
-            cursor: "pointer",
-            boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
-            letterSpacing: "0.02em",
-            userSelect: "none",
-          }}
-          title="Show stations per line"
-        >
-          {showStations ? "✕ Stations" : "🚉 Stations"}
-        </button>
-      </div>
-
-      {/* ── Stations panel ──────────────────────────────────────────────────── */}
-      {showStations && (
-        <div
-          data-testid="stations-panel"
-          style={{
-            position: "absolute",
-            top: 46,
-            right: 12,
-            zIndex: 1000,
-            background: isDark ? "rgba(24,24,27,0.97)" : "rgba(255,255,255,0.97)",
-            color: isDark ? "#e4e4e7" : "#111",
-            borderRadius: 8,
-            boxShadow: "0 2px 10px rgba(0,0,0,0.22)",
-            fontSize: 11,
-            width: 280,
-            maxHeight: "calc(100vh - 120px)",
-            overflowY: "auto",
-          }}
-        >
-          <div style={{
-            padding: "7px 10px",
-            borderBottom: `1px solid ${isDark ? "#3f3f46" : "#e0e0e0"}`,
-            fontWeight: 700,
-            fontSize: 12,
-          }}>
-            Stations by Line · {stationsByLine.reduce((n, [, v]) => n + v.stops.length, 0)} total
-          </div>
-
-          {stationsByLine.length === 0 && (
-            <div style={{ padding: 12, color: "#999", textAlign: "center" }}>
-              {anyLoading ? "Loading…" : "No station data"}
-            </div>
-          )}
-
-          {stationsByLine.map(([ref, line]) => (
-            <div key={ref} style={{ borderBottom: `1px solid ${isDark ? "#27272a" : "#f0f0f0"}` }}>
-              <div style={{
-                display: "flex", alignItems: "center", gap: 7,
-                padding: "6px 10px 4px",
-                background: isDark ? "#18181b" : "#fafafa",
-                position: "sticky", top: 0,
-              }}>
-                <span style={{
-                  display: "inline-block", width: 14, height: 14,
-                  borderRadius: 3, background: line.colour,
-                  border: "1px solid rgba(0,0,0,0.2)", flexShrink: 0,
-                }} />
-                <span style={{ fontWeight: 700, fontSize: 12 }}>{ref} Line</span>
-                <span style={{ color: "#888", fontSize: 10, marginLeft: "auto" }}>
-                  {line.stops.length} stations
-                </span>
-              </div>
-              {line.stops.map((stop, idx) => (
-                <div key={stop.stationName + idx} style={{
-                  display: "flex", alignItems: "center", gap: 8,
-                  padding: "3px 10px 3px 24px",
-                  borderTop: `1px solid ${isDark ? "#27272a" : "#f5f5f5"}`,
-                }}>
-                  <span style={{
-                    width: 6, height: 6, borderRadius: "50%",
-                    background: line.colour,
-                    border: "1px solid rgba(0,0,0,0.15)", flexShrink: 0,
-                  }} />
-                  <span style={{ flex: 1 }}>{stop.stationName}</span>
-                  <span style={{ color: "#aaa", fontSize: 10, flexShrink: 0 }}>
-                    {stop.distanceAlong.toFixed(1)} km
-                  </span>
-                </div>
-              ))}
-            </div>
-          ))}
-        </div>
-      )}
+      {/* ── Right side panel ─────────────────────────────────────────────────── */}
+      <SidePanel
+        trains={trainSnapshot}
+        pathsMap={pathsMap}
+        stationPassengers={stationPassengers}
+        surgeEvents={surgeEvents}
+        addTrain={addTrain}
+        removeTrain={removeTrain}
+        stationsByLine={stationsByLine}
+      />
 
       {/* ── Status banners ───────────────────────────────────────────────────── */}
       {anyLoading && <div data-testid="subway-loading" style={{ display: "none" }} />}
