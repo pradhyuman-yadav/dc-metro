@@ -490,7 +490,7 @@ export function getTrainLatLng(
   return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
 }
 
-// ─── Station approach constants ───────────────────────────────────────────────
+// ─── Station approach + headway constants ─────────────────────────────────────
 
 /** km before a station where the train begins decelerating. */
 const SLOW_ZONE_KM = 0.25;
@@ -498,24 +498,37 @@ const SLOW_ZONE_KM = 0.25;
 const MIN_SPEED_FACTOR = 0.08;
 /** km within which the train is considered to have arrived at a station. */
 const AT_STATION_KM = 0.010;
+/**
+ * Minimum safe following distance on the same route in the same direction.
+ * Below this gap the following train decelerates proportionally to zero.
+ */
+const MIN_HEADWAY_KM = 0.15;
+/**
+ * Hard-stop gap: if the following train is this close to the leader it
+ * stops completely (prevents creeping into an occupied station platform).
+ */
+const HARD_STOP_KM = 0.020;
 
 // ─── Simulation tick ──────────────────────────────────────────────────────────
 
 /**
  * Advance the simulation by `dt` ms. Returns a new TrainState[] (immutable).
  *
- * Movement model:
- *  - At station: count down dwell time; resume moving when done.
- *  - Moving:
- *    1. Find next stop strictly ahead in direction of travel.
- *    2. Within SLOW_ZONE_KM of that stop, linearly reduce speed to
- *       MIN_SPEED_FACTOR so the train smoothly glides into the platform
- *       instead of teleporting.
- *    3. Advance distanceTravelled by effectiveSpeed × dt.
- *    4. At the path end: transition to the partner (return) route, or bounce.
- *    5. Within AT_STATION_KM of the stop: enter at_station (position snapped
- *       to the exact platform coordinate, but the train had already slowed to
- *       near-zero, so the visible jump is < 10 m).
+ * Rules enforced each tick:
+ *
+ * 1. Station capacity = 1 per direction.
+ *    Only one train may occupy a given station in a given direction of travel.
+ *    An approaching train that would enter an occupied platform waits outside.
+ *
+ * 2. No overtaking on the same route.
+ *    Trains on the same (routeId, direction) track maintain at least
+ *    MIN_HEADWAY_KM behind the train directly ahead.  Speed is reduced
+ *    proportionally as the gap shrinks; the train stops completely when
+ *    within HARD_STOP_KM.
+ *
+ * 3. Smooth station approach.
+ *    Within SLOW_ZONE_KM of the next stop the train decelerates linearly.
+ *    Arrival is triggered when within AT_STATION_KM (10 m) of the platform.
  */
 export function tickSimulation(
   trains: TrainState[],
@@ -523,6 +536,34 @@ export function tickSimulation(
   dt: number,
   config: SimulationConfig = DEFAULT_CONFIG
 ): TrainState[] {
+  // ── Pre-compute indices (built from the PREVIOUS frame's state) ────────────
+
+  // Position index for no-overtaking:
+  //   key = "routeId:direction"  →  sorted array of { id, distanceTravelled }
+  type PosEntry = { id: string; distanceTravelled: number };
+  const posIndex = new Map<string, PosEntry[]>();
+
+  // Station-occupancy index for station-capacity rule:
+  //   key = "stationName:direction"  →  true when a train is at_station there
+  //   direction is +1 or -1 as a string so trains going opposite ways at the
+  //   same physical station use separate slots (they are on different platforms).
+  const stationOccupied = new Map<string, boolean>();
+
+  for (const t of trains) {
+    const posKey = `${t.routeId}:${t.direction}`;
+    const list   = posIndex.get(posKey) ?? [];
+    list.push({ id: t.id, distanceTravelled: t.distanceTravelled });
+    posIndex.set(posKey, list);
+
+    if (t.status === "at_station" && t.currentStation) {
+      stationOccupied.set(`${t.currentStation}:${t.direction}`, true);
+    }
+  }
+  for (const list of posIndex.values()) {
+    list.sort((a, b) => a.distanceTravelled - b.distanceTravelled);
+  }
+
+  // ── Per-train tick ─────────────────────────────────────────────────────────
   return trains.map((train) => {
     const path = pathsMap.get(train.routeId);
     if (!path || path.waypoints.length === 0) return train;
@@ -533,28 +574,59 @@ export function tickSimulation(
       if (remaining > 0) return { ...train, dwellRemaining: remaining };
       return {
         ...train,
-        status: "moving",
+        status:         "moving",
         currentStation: null,
         dwellRemaining: 0,
-        platform: train.direction === 1 ? "A" : "B",
+        platform:       train.direction === 1 ? "A" : "B",
       };
     }
 
-    // ── Find next stop (strictly ahead — no re-snap) ──────────────────────────
-    // Uses train.distanceTravelled so deceleration is computed from the train's
-    // actual position, not the yet-to-be-computed new position.
+    // ── Next stop (strictly ahead — eliminates re-snap) ───────────────────────
     const nextStop = findNextStop(path.stops, train.distanceTravelled, train.direction);
 
-    // ── Smooth deceleration approaching a station ─────────────────────────────
+    // ── Gap to leading train on the same route/direction ──────────────────────
+    const posKey    = `${train.routeId}:${train.direction}`;
+    const positions = posIndex.get(posKey) ?? [];
+    let gapToLeader = Infinity;
+
+    if (train.direction === 1) {
+      const leader = positions.find(
+        (p) => p.id !== train.id && p.distanceTravelled > train.distanceTravelled
+      );
+      if (leader) gapToLeader = leader.distanceTravelled - train.distanceTravelled;
+    } else {
+      for (let i = positions.length - 1; i >= 0; i--) {
+        const p = positions[i];
+        if (p.id !== train.id && p.distanceTravelled < train.distanceTravelled) {
+          gapToLeader = train.distanceTravelled - p.distanceTravelled;
+          break;
+        }
+      }
+    }
+
+    // ── Effective speed (station deceleration + headway constraint) ────────────
     let effectiveSpeed = config.speedKmPerMs;
+
+    // 1. Decelerate smoothly approaching the next station
     if (nextStop) {
       const distToStop = train.direction === 1
         ? nextStop.distanceAlong - train.distanceTravelled
         : train.distanceTravelled - nextStop.distanceAlong;
       if (distToStop >= 0 && distToStop < SLOW_ZONE_KM) {
-        // Linear: full speed at SLOW_ZONE_KM, minimum at platform edge.
         effectiveSpeed = config.speedKmPerMs *
           Math.max(distToStop / SLOW_ZONE_KM, MIN_SPEED_FACTOR);
+      }
+    }
+
+    // 2. No-overtaking: reduce speed when closing on the train ahead
+    if (gapToLeader <= MIN_HEADWAY_KM) {
+      if (gapToLeader <= HARD_STOP_KM) {
+        effectiveSpeed = 0; // full stop — too close
+      } else {
+        // Proportional slow-down: zero speed at HARD_STOP_KM, full at MIN_HEADWAY_KM
+        const headwayFactor =
+          (gapToLeader - HARD_STOP_KM) / (MIN_HEADWAY_KM - HARD_STOP_KM);
+        effectiveSpeed = Math.min(effectiveSpeed, config.speedKmPerMs * headwayFactor);
       }
     }
 
@@ -569,9 +641,6 @@ export function tickSimulation(
         : undefined;
 
       if (partnerPath) {
-        // The stitcher may start the partner path at either physical end.
-        // Pick the end that is geographically closest to our current position
-        // so the train transitions without teleportation.
         const myEnd        = path.waypoints[path.waypoints.length - 1];
         const partnerFirst = partnerPath.waypoints[0];
         const partnerLast  = partnerPath.waypoints[partnerPath.waypoints.length - 1];
@@ -592,7 +661,6 @@ export function tickSimulation(
           platform:          fromStart ? "A" : "B",
         };
       }
-      // Fallback: bounce on the same path
       dist = path.totalDistance;
       dir  = -1;
     } else if (dist <= 0) {
@@ -600,10 +668,17 @@ export function tickSimulation(
       dir  = 1;
     }
 
-    // ── Station arrival ───────────────────────────────────────────────────────
-    // The train has decelerated to near-zero, so the < 10 m position correction
-    // is imperceptible.  Terminus stops get the longer dwell.
+    // ── Station arrival (with capacity guard) ─────────────────────────────────
     if (nextStop && Math.abs(dist - nextStop.distanceAlong) <= AT_STATION_KM) {
+      const occupancyKey = `${nextStop.stationName}:${dir}`;
+
+      // If the platform is already occupied by a train going the same direction,
+      // hold position — don't enter.  The train is already near-zero speed from
+      // the slow-zone + headway deceleration, so holding looks natural.
+      if (stationOccupied.get(occupancyKey)) {
+        return { ...train }; // freeze at current position
+      }
+
       const stopIndex  = path.stops.indexOf(nextStop);
       const isTerminus = stopIndex === 0 || stopIndex === path.stops.length - 1;
       return {
@@ -620,8 +695,8 @@ export function tickSimulation(
     return {
       ...train,
       distanceTravelled: dist,
-      direction: dir,
-      platform: dir === 1 ? "A" : "B",
+      direction:         dir,
+      platform:          dir === 1 ? "A" : "B",
     };
   });
 }
