@@ -57,7 +57,7 @@ const cardStyle: React.CSSProperties = {
   background: "var(--card, rgba(255,255,255,0.95))",
   border: "1px solid var(--color-border, rgba(0,0,0,0.1))",
   borderRadius: 12,
-  padding: 16,
+  padding: 20,
 };
 
 interface SidePanelProps {
@@ -104,6 +104,39 @@ export default function SidePanel({
     ? Math.round((totalAboard / (trains.length * 1050)) * 100)
     : 0;
 
+  // Network stats
+  const totalTrackKm = useMemo(() => {
+    let km = 0;
+    const seenRefs = new Set<string>();
+    for (const path of pathsMap.values()) {
+      if (!seenRefs.has(path.routeRef)) {
+        seenRefs.add(path.routeRef);
+        km += path.totalDistance;
+      }
+    }
+    return Math.round(km);
+  }, [pathsMap]);
+
+  const peakLoad = useMemo(() => {
+    let max = 0;
+    for (const sp of stationPassengers.values()) {
+      if (sp.capacity > 0) max = Math.max(max, sp.current / sp.capacity);
+    }
+    return Math.round(max * 100);
+  }, [stationPassengers]);
+
+  const busiestStation = useMemo(() => {
+    let maxPct = 0;
+    let name = "";
+    for (const [n, sp] of stationPassengers.entries()) {
+      const pct = sp.capacity > 0 ? sp.current / sp.capacity : 0;
+      if (pct > maxPct) { maxPct = pct; name = n; }
+    }
+    return name ? `${name.split("-")[0].trim()} ${Math.round(maxPct * 100)}%` : "—";
+  }, [stationPassengers]);
+
+  const atCapacity = trains.filter((t) => (t.passengers ?? 0) >= 900).length;
+
   // EST clock + service status
   const [estTime, setEstTime] = useState("");
   const [serviceLabel, setServiceLabel] = useState<{ active: boolean; label: string }>({ active: true, label: "In Service" });
@@ -139,10 +172,10 @@ export default function SidePanel({
         top: 12,
         right: 12,
         zIndex: 1000,
-        width: 272,
+        width: 296,
         display: "flex",
         flexDirection: "column",
-        gap: 8,
+        gap: 10,
         maxHeight: "calc(100vh - 24px)",
         overflowY: "auto",
         overflowX: "hidden",
@@ -151,22 +184,27 @@ export default function SidePanel({
       {/* ── Header card ──────────────────────────────────────────────────────── */}
       <div style={cardStyle}>
         {/* Title row */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
-          <span style={{ fontWeight: 700, fontSize: 13, color: "var(--color-foreground)" }}>
-            DC Metro Sim
-          </span>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <div>
+            <div style={{ fontWeight: 700, fontSize: 14, color: "var(--color-foreground)", lineHeight: 1.2 }}>
+              DC Metro Live
+            </div>
+            <div style={{ fontSize: 10, color: "var(--color-muted-foreground)", marginTop: 1 }}>
+              by Pradhyuman
+            </div>
+          </div>
           <ThemeToggle />
         </div>
 
         {/* EST clock + service status */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          marginBottom: 12,
+          marginBottom: 14,
         }}>
           <span style={{
             display: "inline-flex", alignItems: "center", gap: 4,
             fontSize: 9, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.06em", padding: "2px 6px", borderRadius: 10,
+            letterSpacing: "0.06em", padding: "3px 7px", borderRadius: 10,
             background: serviceLabel.active ? "rgba(34,197,94,0.12)" : "rgba(239,68,68,0.12)",
             color: serviceLabel.active ? "#16a34a" : "#dc2626",
           }}>
@@ -185,7 +223,7 @@ export default function SidePanel({
         </div>
 
         {/* Stats row */}
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
           <StatChip label="Trains"   value={trains.length} />
           <StatChip label="Stations" value={totalStations} />
           <StatChip label="Lines"    value={activeRefs.length} />
@@ -199,35 +237,54 @@ export default function SidePanel({
         total={trains.length}
       />
 
-      {/* Passenger sub-stats */}
-      <div style={{ ...cardStyle, padding: "10px 16px" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8 }}>
-          <PassengerStat label="Aboard"  value={totalAboard.toLocaleString()} />
-          <PassengerStat label="Waiting" value={totalWaiting.toLocaleString()} />
-          <PassengerStat label="Avg load" value={`${avgLoad}%`} />
+      {/* ── Network stats card ────────────────────────────────────────────────── */}
+      <div style={{ ...cardStyle, padding: "14px 20px" }}>
+        <p style={{
+          fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 12,
+        }}>
+          Network Stats
+        </p>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+          <NetworkStat label="Aboard trains"   value={totalAboard.toLocaleString()} unit="pax" />
+          <NetworkStat label="Waiting at sta." value={totalWaiting.toLocaleString()} unit="pax" />
+          <NetworkStat label="Avg train load"  value={`${avgLoad}%`} />
+          <NetworkStat label="Peak stn. load"  value={`${peakLoad}%`} />
+          <NetworkStat label="Track covered"   value={`${totalTrackKm} km`} />
+          <NetworkStat label="At capacity"     value={`${atCapacity}`} unit="trains" />
         </div>
+        {busiestStation !== "—" && (
+          <div style={{
+            marginTop: 10, paddingTop: 10,
+            borderTop: "1px solid var(--color-border)",
+            fontSize: 10, color: "var(--color-muted-foreground)",
+          }}>
+            Busiest station: <span style={{ fontWeight: 600, color: "var(--color-foreground)" }}>{busiestStation}</span>
+          </div>
+        )}
       </div>
 
       {/* ── Active lines card ─────────────────────────────────────────────────── */}
       <div style={cardStyle}>
         <p style={{
           fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 10,
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 12,
         }}>
           Active Lines
         </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {activeRefs.map((ref) => {
             const meta      = LINE_META[ref];
             const label     = meta?.label ?? ref;
             const colour    = meta?.colour ?? "#666";
             const trainsCnt = trains.filter((t) => t.routeRef === ref).length;
+            const aboard    = trains.filter((t) => t.routeRef === ref).reduce((s, t) => s + (t.passengers ?? 0), 0);
             const staCnt    = stationCountByRef.get(ref) ?? 0;
             const maxTrains = Math.max(1, staCnt - 1);
 
             return (
-              <div key={ref} style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <div key={ref} style={{ display: "flex", alignItems: "center", gap: 8 }}>
                 <span style={{
                   flexShrink: 0, width: 10, height: 10,
                   borderRadius: "50%", background: colour,
@@ -236,10 +293,10 @@ export default function SidePanel({
                   {label}
                 </span>
                 <span style={{ fontSize: 10, color: "var(--color-muted-foreground)", whiteSpace: "nowrap" }}>
-                  {trainsCnt} trains · {staCnt} sta
+                  {trainsCnt} trains · {aboard} pax
                 </span>
                 {/* +/- controls */}
-                <div style={{ display: "flex", gap: 3, flexShrink: 0 }}>
+                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
                   <ControlBtn
                     label="-"
                     disabled={trainsCnt <= 1}
@@ -268,17 +325,17 @@ export default function SidePanel({
         <div style={{ ...cardStyle, borderColor: "rgba(234,179,8,0.4)", background: "rgba(254,252,232,0.97)" }}>
           <p style={{
             fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.06em", color: "#92400e", marginBottom: 8,
+            letterSpacing: "0.06em", color: "#92400e", marginBottom: 10,
           }}>
             Active Surge Events
           </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
             {surgeEvents.map((event) => {
               const minsLeft = Math.max(0, Math.ceil((event.expiresAt - Date.now()) / 60_000));
               return (
                 <div key={event.id} style={{
                   fontSize: 11, color: "#78350f",
-                  padding: "3px 0",
+                  padding: "4px 0",
                   borderBottom: "1px solid rgba(234,179,8,0.2)",
                   display: "flex", justifyContent: "space-between", alignItems: "center",
                 }}>
@@ -297,7 +354,7 @@ export default function SidePanel({
       <div style={cardStyle}>
         <p style={{
           fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 8,
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 10,
         }}>
           Line Info
         </p>
@@ -315,7 +372,7 @@ export default function SidePanel({
           style={{
             width: "100%", display: "flex", alignItems: "center",
             justifyContent: "space-between", background: "none", border: "none",
-            cursor: "pointer", padding: 0, marginBottom: stationsOpen ? 10 : 0,
+            cursor: "pointer", padding: 0, marginBottom: stationsOpen ? 12 : 0,
           }}
         >
           <p style={{
@@ -341,10 +398,10 @@ export default function SidePanel({
               </p>
             )}
             {stationsByLine.map(([ref, line]) => (
-              <div key={ref} style={{ marginBottom: 8 }}>
+              <div key={ref} style={{ marginBottom: 10 }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 6,
-                  padding: "4px 0", marginBottom: 2,
+                  padding: "5px 0", marginBottom: 2,
                   position: "sticky", top: 0,
                   background: "var(--card, rgba(255,255,255,0.97))",
                 }}>
@@ -362,7 +419,7 @@ export default function SidePanel({
                 {line.stops.map((stop, idx) => (
                   <div key={stop.stationName + idx} style={{
                     display: "flex", alignItems: "center", gap: 6,
-                    padding: "2px 0 2px 14px",
+                    padding: "3px 0 3px 14px",
                     borderTop: "1px solid var(--color-border)",
                   }}>
                     <span style={{
@@ -390,7 +447,7 @@ export default function SidePanel({
           background: "rgba(239,68,68,0.06)",
           borderColor: "rgba(239,68,68,0.3)",
           textAlign: "center",
-          padding: "12px 16px",
+          padding: "14px 20px",
         }}>
           <p style={{ fontSize: 12, fontWeight: 700, color: "#dc2626", marginBottom: 4 }}>
             Metro Closed
@@ -406,32 +463,59 @@ export default function SidePanel({
       <div style={cardStyle}>
         <p style={{
           fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 10,
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 12,
         }}>
           About This Project
         </p>
 
-        <p style={{ fontSize: 11, lineHeight: 1.6, color: "var(--color-foreground)", marginBottom: 10 }}>
-          A fully autonomous DC Metro simulation — trains run, board passengers, and respond
-          to real-world events <em>without any human input</em>.
+        <p style={{ fontSize: 11, lineHeight: 1.65, color: "var(--color-foreground)", marginBottom: 12 }}>
+          A fully autonomous DC Metro simulation running 24/7 — trains move, board passengers,
+          and respond to real-world events <em>without any human intervention</em>.
+          Every visitor sees the same live state, powered by a single server-side simulation loop.
         </p>
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 10 }}>
-          <AboutLine title="Real track data" detail="Live OSM Overpass API — actual WMATA geometry, not hardcoded paths" />
-          <AboutLine title="Physics engine" detail="Headway enforcement, deceleration zones, terminus switching, 88 km/h top speed" />
-          <AboutLine title="Passenger model" detail="Per-station capacity tiers, boarding/alighting dynamics, surge events" />
-          <AboutLine title="Persistent state" detail="SQLite survives page refreshes — trains restore to exact saved position" />
-          <AboutLine title="Service hours" detail="Simulation pauses midnight–5 AM matching real WMATA schedule" />
-          <AboutLine title="Stack" detail="Next.js 15, React 19, Leaflet, Framer Motion, better-sqlite3, Vitest" />
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
+          <AboutLine
+            title="Real track geometry"
+            detail="Live OpenStreetMap Overpass API — actual WMATA waypoints, not hardcoded paths" />
+          <AboutLine
+            title="Physics engine"
+            detail="Headway enforcement, deceleration zones, station approach, terminus switching at 88 km/h" />
+          <AboutLine
+            title="Passenger model"
+            detail="Per-station capacity tiers (300–1200), boarding/alighting dynamics, surge multipliers 3–5×" />
+          <AboutLine
+            title="Server-side singleton"
+            detail="Node.js setInterval tick at 100 ms — one authoritative loop, broadcast via SSE to all clients" />
+          <AboutLine
+            title="Persistent state"
+            detail="SQLite (better-sqlite3) persists every 60 s — trains resume exact position after server restart" />
+          <AboutLine
+            title="WMATA service hours"
+            detail="Simulation pauses midnight–5 AM EST matching real schedule; resumes automatically at open" />
+          <AboutLine
+            title="Zero manual operation"
+            detail="Surge events fire autonomously every 45–90 min; trains self-regulate spacing and platform occupancy" />
+          <AboutLine
+            title="Stack"
+            detail="Next.js 15 · React 19 · Leaflet · Framer Motion · better-sqlite3 · Vitest · Docker" />
         </div>
 
-        <p style={{ fontSize: 10, lineHeight: 1.5, color: "var(--color-muted-foreground)", borderTop: "1px solid var(--color-border)", paddingTop: 8 }}>
-          Built by{" "}
-          <span style={{ fontWeight: 700, color: "var(--color-foreground)" }}>Pradhanand</span>
-          {" "}at{" "}
-          <span style={{ fontWeight: 700, color: "var(--color-foreground)" }}>Colaberry</span>
-          {" "}to demonstrate production-grade agentic systems: real data pipelines, autonomous simulation loops, and zero-intervention operation.
-        </p>
+        <div style={{
+          borderTop: "1px solid var(--color-border)", paddingTop: 12,
+          display: "flex", flexDirection: "column", gap: 4,
+        }}>
+          <p style={{ fontSize: 11, lineHeight: 1.55, color: "var(--color-foreground)" }}>
+            Built by{" "}
+            <span style={{ fontWeight: 700 }}>Pradhyuman</span>
+            {" "}as a personal showcase of production-grade autonomous systems:
+            real data pipelines, server-side simulation, and zero-intervention 24/7 operation.
+          </p>
+          <p style={{ fontSize: 10, color: "var(--color-muted-foreground)", lineHeight: 1.5 }}>
+            This project demonstrates skills in full-stack engineering, real-time systems, geospatial data,
+            and agentic software design — built independently, from scratch.
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -443,24 +527,25 @@ function StatChip({ label, value }: { label: string; value: number }) {
   return (
     <div style={{
       display: "flex", flexDirection: "column", alignItems: "center",
-      padding: "6px 4px", borderRadius: 8,
+      padding: "8px 4px", borderRadius: 8,
       background: "var(--color-muted, rgba(0,0,0,0.05))",
     }}>
-      <span style={{ fontSize: 15, fontWeight: 700, color: "var(--color-foreground)", lineHeight: 1 }}>
+      <span style={{ fontSize: 16, fontWeight: 700, color: "var(--color-foreground)", lineHeight: 1 }}>
         {value}
       </span>
-      <span style={{ fontSize: 9, color: "var(--color-muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>
+      <span style={{ fontSize: 9, color: "var(--color-muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 3 }}>
         {label}
       </span>
     </div>
   );
 }
 
-function PassengerStat({ label, value }: { label: string; value: string }) {
+function NetworkStat({ label, value, unit }: { label: string; value: string; unit?: string }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
-      <span style={{ fontSize: 12, fontWeight: 700, color: "var(--color-foreground)", lineHeight: 1 }}>
+    <div style={{ display: "flex", flexDirection: "column" }}>
+      <span style={{ fontSize: 13, fontWeight: 700, color: "var(--color-foreground)", lineHeight: 1.2 }}>
         {value}
+        {unit && <span style={{ fontSize: 10, fontWeight: 400, color: "var(--color-muted-foreground)", marginLeft: 3 }}>{unit}</span>}
       </span>
       <span style={{ fontSize: 9, color: "var(--color-muted-foreground)", textTransform: "uppercase", letterSpacing: "0.04em", marginTop: 2 }}>
         {label}
@@ -471,12 +556,12 @@ function PassengerStat({ label, value }: { label: string; value: string }) {
 
 function AboutLine({ title, detail }: { title: string; detail: string }) {
   return (
-    <div style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
       <span style={{
-        flexShrink: 0, width: 4, height: 4, borderRadius: "50%", marginTop: 5,
+        flexShrink: 0, width: 4, height: 4, borderRadius: "50%", marginTop: 6,
         background: "var(--color-muted-foreground)",
       }} />
-      <span style={{ fontSize: 11, lineHeight: 1.45, color: "var(--color-foreground)" }}>
+      <span style={{ fontSize: 11, lineHeight: 1.5, color: "var(--color-foreground)" }}>
         <span style={{ fontWeight: 600 }}>{title}:</span>{" "}
         <span style={{ color: "var(--color-muted-foreground)" }}>{detail}</span>
       </span>
@@ -498,9 +583,9 @@ function ControlBtn({
       onClick={onClick}
       disabled={disabled}
       style={{
-        width: 20, height: 20,
+        width: 22, height: 22,
         display: "flex", alignItems: "center", justifyContent: "center",
-        borderRadius: 4,
+        borderRadius: 5,
         border: "1px solid var(--color-border, rgba(0,0,0,0.12))",
         background: "var(--color-muted, rgba(0,0,0,0.05))",
         color: disabled ? "var(--color-muted-foreground)" : "var(--color-foreground)",

@@ -37,7 +37,7 @@ const TILE_LIGHT = "https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.p
 const TILE_DARK  = "https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png";
 
 export const TILE_URL         = TILE_LIGHT; // exported for tests
-export const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>';
+export const TILE_ATTRIBUTION = '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a> | Built by <a href="https://github.com/pradhyuman-yadav" target="_blank" rel="noopener noreferrer">Pradhyuman</a>';
 export const TILE_SUBDOMAINS  = "abcd";
 export const TILE_MAX_ZOOM    = 20;
 
