@@ -7,13 +7,19 @@ vi.mock('leaflet', () => ({
   default: {
     latLngBounds: () => ({}),
     latLng: (lat: number, lng: number) => ({ lat, lng }),
+    tileLayer: () => ({ addTo: () => ({ setUrl: vi.fn() }), setUrl: vi.fn() }),
   },
+}));
+vi.mock('next-themes', () => ({
+  useTheme: () => ({ resolvedTheme: 'light', setTheme: vi.fn() }),
 }));
 
 // Subway/station/train layers and hooks tested in their own files
 vi.mock('@/components/SubwayLayer', () => ({ default: () => null }));
 vi.mock('@/components/StationLayer', () => ({ default: () => null }));
 vi.mock('@/components/TrainLayer', () => ({ default: () => null }));
+vi.mock('@/components/SidePanel', () => ({ default: () => null }));
+vi.mock('@/components/LoadingScreen', () => ({ default: () => null }));
 vi.mock('@/hooks/useSubwayRoutes', () => ({
   useSubwayRoutes: () => ({ routes: [], loading: false, error: null }),
 }));
