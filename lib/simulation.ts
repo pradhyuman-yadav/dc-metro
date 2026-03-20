@@ -535,19 +535,34 @@ export function tickSimulation(
     // At the end of the route: transition to the paired return route if available,
     // otherwise bounce on the same path (unpaired / fallback behaviour).
     if (dist >= path.totalDistance) {
-      if (train.partnerRouteId !== null && pathsMap.has(train.partnerRouteId)) {
-        // Switch to the opposite-direction route at its start.
-        // Swap partnerRouteId so the train knows its way back.
+      const partnerPath = train.partnerRouteId !== null
+        ? pathsMap.get(train.partnerRouteId)
+        : undefined;
+
+      if (partnerPath) {
+        // Determine which end of the partner path is geographically closest to
+        // our current position (the outbound terminus).  The stitcher picks the
+        // degree-1 node as the path start, which may be either end of the line.
+        // Checking proximity avoids teleportation when the partner's stitched
+        // path starts at the far terminus instead of the near one.
+        const myEnd = path.waypoints[path.waypoints.length - 1];
+        const partnerFirst = partnerPath.waypoints[0];
+        const partnerLast  = partnerPath.waypoints[partnerPath.waypoints.length - 1];
+        const fromStart = haversineKm(myEnd, partnerFirst) <= haversineKm(myEnd, partnerLast);
+
         return {
           ...train,
-          routeId: train.partnerRouteId,
-          partnerRouteId: train.routeId,
-          distanceTravelled: 0,
-          direction: 1,
-          status: "moving",
-          currentStation: null,
-          dwellRemaining: 0,
-          platform: "A",
+          routeId:           train.partnerRouteId!,
+          partnerRouteId:    train.routeId,
+          routeRef:          partnerPath.routeRef,
+          routeColour:       partnerPath.routeColour,
+          routeName:         partnerPath.routeName,
+          distanceTravelled: fromStart ? 0 : partnerPath.totalDistance,
+          direction:         fromStart ? 1 : -1,
+          status:            "moving",
+          currentStation:    null,
+          dwellRemaining:    0,
+          platform:          fromStart ? "A" : "B",
         };
       }
       // Fallback: bounce direction
@@ -655,8 +670,20 @@ export function getTrainAheadPos(
 }
 
 /**
- * Find the nearest stop ahead of `distanceTravelled` in the given direction.
+ * Find the nearest stop strictly ahead of `distanceTravelled` in the given direction.
+ *
+ * "Strictly ahead" means the stop's distanceAlong must be greater than
+ * (direction=1) or less than (direction=-1) the current position by at least
+ * SNAP_CLEAR km.  This prevents the re-snap loop that occurred when a train
+ * resumed moving from a station: it was still within stationRadiusKm of the
+ * same stop, so the old tolerance (±0.001 km) immediately returned the same
+ * stop and the train was snapped back indefinitely.
+ *
+ * SNAP_CLEAR is intentionally smaller than stationRadiusKm (0.15 km) so that
+ * an approaching train is still detected well before it reaches the platform.
  */
+const SNAP_CLEAR = 0.005; // 5 m — must have moved this far past a stop to clear it
+
 function findNextStop(
   stops: RouteStop[],
   distanceTravelled: number,
@@ -665,15 +692,15 @@ function findNextStop(
   if (stops.length === 0) return null;
 
   if (direction === 1) {
-    // Moving forward — find first stop at or ahead of current position
+    // Moving forward — find the first stop that is strictly ahead of us
     for (const stop of stops) {
-      if (stop.distanceAlong >= distanceTravelled - 0.001) return stop;
+      if (stop.distanceAlong > distanceTravelled - SNAP_CLEAR) return stop;
     }
     return null;
   } else {
-    // Moving backward — find last stop at or behind current position
+    // Moving backward — find the last stop that is strictly behind us
     for (let i = stops.length - 1; i >= 0; i--) {
-      if (stops[i].distanceAlong <= distanceTravelled + 0.001) return stops[i];
+      if (stops[i].distanceAlong < distanceTravelled + SNAP_CLEAR) return stops[i];
     }
     return null;
   }
