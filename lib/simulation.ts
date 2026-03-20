@@ -464,13 +464,17 @@ export function initTrains(
     const partnerRouteId = routePairs.get(path.routeId) ?? null;
 
     for (let i = 0; i < config.trainsPerRoute; i++) {
-      // Paired routes: always start at position 0, always travel forward.
+      // Paired routes: spread trains evenly along the full route so they appear
+      // distributed across the map immediately (not stacked at position 0).
+      // All paired trains travel forward (dir +1) and transfer to the partner
+      // route at the terminus.
       // Unpaired routes: alternate — even index at terminus A (pos 0, dir +1),
       //                              odd  index at terminus B (pos max, dir -1).
       const direction: TrainDirection =
         partnerRouteId !== null ? 1 : i % 2 === 0 ? 1 : -1;
-      const distanceTravelled =
-        partnerRouteId !== null || i % 2 === 0 ? 0 : path.totalDistance;
+      const distanceTravelled = partnerRouteId !== null
+        ? (i / config.trainsPerRoute) * path.totalDistance
+        : i % 2 === 0 ? 0 : path.totalDistance;
 
       trains.push({
         id: `${path.routeId}-${i + 1}`,
