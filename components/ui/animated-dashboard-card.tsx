@@ -83,10 +83,11 @@ export function BonusesIncentivesCard({
 
   return (
     <div
-      className="rounded-xl border p-4"
+      className="rounded-xl border"
       style={{
         background: "var(--card, rgba(255,255,255,0.92))",
         borderColor: "var(--color-border, rgba(0,0,0,0.1))",
+        padding: 20,
       }}
     >
       <p

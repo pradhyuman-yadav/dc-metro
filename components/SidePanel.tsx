@@ -617,7 +617,7 @@ function TrainDetailsList({
       </button>
 
       {open && (
-        <div className="no-scrollbar" style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 4 }}>
+        <div className="no-scrollbar" style={{ maxHeight: 260, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 }}>
           {sorted.length === 0 && (
             <p style={{ fontSize: 11, color: "var(--color-muted-foreground)", fontStyle: "italic" }}>
               No trains active
@@ -664,7 +664,7 @@ function TrainRow({
 
   return (
     <div style={{
-      padding: "6px 0",
+      padding: "8px 0",
       borderBottom: "1px solid var(--color-border)",
     }}>
       {/* Row 1: ID + status badge */}
