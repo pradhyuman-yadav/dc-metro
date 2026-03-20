@@ -692,7 +692,7 @@ export function tickSimulation(
 
     // ── Move ──────────────────────────────────────────────────────────────────
     let dist = train.distanceTravelled + train.direction * effectiveSpeed * dt;
-    let dir  = train.direction;
+    let dir: TrainDirection  = train.direction;
 
     // ── Terminus: transition to partner route, or bounce ──────────────────────
     if (dist >= path.totalDistance) {
@@ -714,7 +714,7 @@ export function tickSimulation(
           routeColour:       partnerPath.routeColour,
           routeName:         partnerPath.routeName,
           distanceTravelled: fromStart ? 0 : partnerPath.totalDistance,
-          direction:         fromStart ? 1 : -1,
+          direction:         (fromStart ? 1 : -1) as TrainDirection,
           status:            "moving" as TrainStatus,
           currentStation:    null,
           dwellRemaining:    0,
