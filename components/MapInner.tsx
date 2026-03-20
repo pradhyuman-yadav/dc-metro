@@ -15,10 +15,10 @@ import { detectPathGaps } from "@/lib/simulation";
 export const DC_CENTER: [number, number] = [38.9072, -77.0369];
 export const DEFAULT_ZOOM = 12;
 
-// ~100 km radius from DC center
+// ~50 km radius from DC center
 const MAX_BOUNDS = L.latLngBounds(
-  L.latLng(38.0, -78.2),
-  L.latLng(39.8, -75.9)
+  L.latLng(38.45, -77.6),
+  L.latLng(39.35, -76.5)
 );
 
 /** Imperatively applies maxBounds after the Leaflet map has mounted. */
@@ -101,7 +101,7 @@ export default function MapInner() {
         center={DC_CENTER}
         zoom={DEFAULT_ZOOM}
         minZoom={7}
-        maxBounds={[[38.0, -78.2], [39.8, -75.9]]}
+        maxBounds={[[38.45, -77.6], [39.35, -76.5]]}
         maxBoundsViscosity={1.0}
         style={{ height: "100%", width: "100%" }}
         data-testid="map-container"
