@@ -25,8 +25,9 @@ export default function MapInner() {
   const { routes, loading, error } = useSubwayRoutes();
   const { stations, loading: stationsLoading, error: stationsError } = useSubwayStations();
 
-  // Debug state
+  // Debug / stations panel state
   const [showDebug, setShowDebug]         = useState(false);
+  const [showStations, setShowStations]   = useState(false);
   const [excludedIds, setExcludedIds]     = useState<Set<number>>(new Set());
 
   // Filter routes before passing to simulation so excluded routes
@@ -39,6 +40,23 @@ export default function MapInner() {
   const { trainsRef, pathsMap } = useSimulation(activeRoutes, stations);
 
   const anyLoading = loading || stationsLoading;
+
+  // Build station list grouped by physical line (one entry per routeRef).
+  // Pick the direction with more stops so the full station list is shown.
+  const stationsByLine = useMemo(() => {
+    const byRef = new Map<string, { colour: string; name: string; stops: { stationName: string; distanceAlong: number }[] }>();
+    for (const path of pathsMap.values()) {
+      const prev = byRef.get(path.routeRef);
+      if (!prev || path.stops.length > prev.stops.length) {
+        byRef.set(path.routeRef, {
+          colour: path.routeColour,
+          name: path.routeName.replace(/\s+(Inbound|Outbound|Direction.*)/i, ""),
+          stops: path.stops.map((s) => ({ stationName: s.stationName, distanceAlong: s.distanceAlong })),
+        });
+      }
+    }
+    return Array.from(byRef.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [pathsMap]);
 
   // Count how many routes have at least one stitching gap
   const routesWithGaps = useMemo(() => {
@@ -81,33 +99,52 @@ export default function MapInner() {
         <TrainLayer trainsRef={trainsRef} pathsMap={pathsMap} />
       </MapContainer>
 
-      {/* ── Debug toggle button ─────────────────────────────────────────────── */}
-      <button
-        data-testid="debug-toggle"
-        onClick={() => setShowDebug((v) => !v)}
-        style={{
-          position: "absolute",
-          top: 12,
-          right: 12,
-          zIndex: 1000,
-          background: showDebug ? "#1a1a2e" : "rgba(255,255,255,0.92)",
-          color: showDebug ? "#fff" : "#333",
-          border: "1px solid rgba(0,0,0,0.18)",
-          borderRadius: 8,
-          padding: "5px 12px",
-          fontSize: 12,
-          fontWeight: 600,
-          cursor: "pointer",
-          boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
-          letterSpacing: "0.02em",
-          userSelect: "none",
-        }}
-        title="Toggle simulation path overlay and route inspector"
-      >
-        {showDebug
-          ? `▶ Debug ON${routesWithGaps > 0 ? ` · ${routesWithGaps} ⚠` : ""}`
-          : "▷ Debug"}
-      </button>
+      {/* ── Control buttons ─────────────────────────────────────────────────── */}
+      <div style={{ position: "absolute", top: 12, right: 12, zIndex: 1000, display: "flex", gap: 6 }}>
+        <button
+          data-testid="stations-toggle"
+          onClick={() => { setShowStations((v) => !v); setShowDebug(false); }}
+          style={{
+            background: showStations ? "#14532d" : "rgba(255,255,255,0.92)",
+            color: showStations ? "#fff" : "#333",
+            border: "1px solid rgba(0,0,0,0.18)",
+            borderRadius: 8,
+            padding: "5px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
+            letterSpacing: "0.02em",
+            userSelect: "none",
+          }}
+          title="Show stations per line"
+        >
+          {showStations ? "✕ Stations" : "🚉 Stations"}
+        </button>
+
+        <button
+          data-testid="debug-toggle"
+          onClick={() => { setShowDebug((v) => !v); setShowStations(false); }}
+          style={{
+            background: showDebug ? "#1a1a2e" : "rgba(255,255,255,0.92)",
+            color: showDebug ? "#fff" : "#333",
+            border: "1px solid rgba(0,0,0,0.18)",
+            borderRadius: 8,
+            padding: "5px 12px",
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            boxShadow: "0 1px 4px rgba(0,0,0,0.18)",
+            letterSpacing: "0.02em",
+            userSelect: "none",
+          }}
+          title="Toggle simulation path overlay and route inspector"
+        >
+          {showDebug
+            ? `▶ Debug ON${routesWithGaps > 0 ? ` · ${routesWithGaps} ⚠` : ""}`
+            : "▷ Debug"}
+        </button>
+      </div>
 
       {/* ── Route inspector panel ───────────────────────────────────────────── */}
       {showDebug && (
@@ -241,6 +278,101 @@ export default function MapInner() {
               {loading ? "Loading routes…" : "No routes loaded"}
             </div>
           )}
+        </div>
+      )}
+
+      {/* ── Stations panel ──────────────────────────────────────────────────── */}
+      {showStations && (
+        <div
+          data-testid="stations-panel"
+          style={{
+            position: "absolute",
+            top: 46,
+            right: 12,
+            zIndex: 1000,
+            background: "rgba(255,255,255,0.97)",
+            borderRadius: 8,
+            boxShadow: "0 2px 10px rgba(0,0,0,0.22)",
+            fontSize: 11,
+            width: 280,
+            maxHeight: "calc(100vh - 120px)",
+            overflowY: "auto",
+          }}
+        >
+          <div style={{
+            padding: "7px 10px",
+            borderBottom: "1px solid #e0e0e0",
+            fontWeight: 700,
+            fontSize: 12,
+            color: "#111",
+          }}>
+            Stations by Line · {stationsByLine.reduce((n, [, v]) => n + v.stops.length, 0)} total
+          </div>
+
+          {stationsByLine.length === 0 && (
+            <div style={{ padding: 12, color: "#999", textAlign: "center" }}>
+              {anyLoading ? "Loading…" : "No station data"}
+            </div>
+          )}
+
+          {stationsByLine.map(([ref, line]) => (
+            <div key={ref} style={{ borderBottom: "1px solid #f0f0f0" }}>
+              {/* Line header */}
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 7,
+                padding: "6px 10px 4px",
+                background: "#fafafa",
+                position: "sticky",
+                top: 0,
+              }}>
+                <span style={{
+                  display: "inline-block",
+                  width: 14,
+                  height: 14,
+                  borderRadius: 3,
+                  background: line.colour,
+                  border: "1px solid rgba(0,0,0,0.2)",
+                  flexShrink: 0,
+                }} />
+                <span style={{ fontWeight: 700, color: "#111", fontSize: 12 }}>
+                  {ref} Line
+                </span>
+                <span style={{ color: "#888", fontSize: 10, marginLeft: "auto" }}>
+                  {line.stops.length} stations
+                </span>
+              </div>
+
+              {/* Station list */}
+              {line.stops.map((stop, idx) => (
+                <div
+                  key={stop.stationName + idx}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    padding: "3px 10px 3px 24px",
+                    borderTop: "1px solid #f5f5f5",
+                  }}
+                >
+                  {/* Track dot */}
+                  <span style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    background: line.colour,
+                    border: "1px solid rgba(0,0,0,0.15)",
+                    flexShrink: 0,
+                  }} />
+                  <span style={{ flex: 1, color: "#222" }}>{stop.stationName}</span>
+                  <span style={{ color: "#aaa", fontSize: 10, flexShrink: 0 }}>
+                    {stop.distanceAlong.toFixed(1)} km
+                  </span>
+                </div>
+              ))}
+            </div>
+          ))}
         </div>
       )}
 

@@ -490,16 +490,32 @@ export function getTrainLatLng(
   return [a[0] + t * (b[0] - a[0]), a[1] + t * (b[1] - a[1])];
 }
 
+// ─── Station approach constants ───────────────────────────────────────────────
+
+/** km before a station where the train begins decelerating. */
+const SLOW_ZONE_KM = 0.25;
+/** Minimum speed factor (fraction of full speed) inside the slow zone. */
+const MIN_SPEED_FACTOR = 0.08;
+/** km within which the train is considered to have arrived at a station. */
+const AT_STATION_KM = 0.010;
+
 // ─── Simulation tick ──────────────────────────────────────────────────────────
 
 /**
  * Advance the simulation by `dt` ms. Returns a new TrainState[] (immutable).
  *
- * Logic per train:
- *  - At station: count down dwell. When done, resume moving.
- *  - Moving: advance distanceTravelled by speed×dt.
- *    Check if within stationRadiusKm of the next stop in travel direction.
- *    If yes → at_station. If past terminus → bounce direction.
+ * Movement model:
+ *  - At station: count down dwell time; resume moving when done.
+ *  - Moving:
+ *    1. Find next stop strictly ahead in direction of travel.
+ *    2. Within SLOW_ZONE_KM of that stop, linearly reduce speed to
+ *       MIN_SPEED_FACTOR so the train smoothly glides into the platform
+ *       instead of teleporting.
+ *    3. Advance distanceTravelled by effectiveSpeed × dt.
+ *    4. At the path end: transition to the partner (return) route, or bounce.
+ *    5. Within AT_STATION_KM of the stop: enter at_station (position snapped
+ *       to the exact platform coordinate, but the train had already slowed to
+ *       near-zero, so the visible jump is < 10 m).
  */
 export function tickSimulation(
   trains: TrainState[],
@@ -514,41 +530,52 @@ export function tickSimulation(
     // ── Dwell countdown ───────────────────────────────────────────────────────
     if (train.status === "at_station") {
       const remaining = train.dwellRemaining - dt;
-      if (remaining > 0) {
-        return { ...train, dwellRemaining: remaining };
-      }
-      // Resume moving — flip direction if at terminus
-      const newDir = train.direction;
+      if (remaining > 0) return { ...train, dwellRemaining: remaining };
       return {
         ...train,
         status: "moving",
         currentStation: null,
         dwellRemaining: 0,
-        platform: newDir === 1 ? "A" : "B",
+        platform: train.direction === 1 ? "A" : "B",
       };
     }
 
-    // ── Move ──────────────────────────────────────────────────────────────────
-    let dist = train.distanceTravelled + train.direction * config.speedKmPerMs * dt;
-    let dir = train.direction;
+    // ── Find next stop (strictly ahead — no re-snap) ──────────────────────────
+    // Uses train.distanceTravelled so deceleration is computed from the train's
+    // actual position, not the yet-to-be-computed new position.
+    const nextStop = findNextStop(path.stops, train.distanceTravelled, train.direction);
 
-    // At the end of the route: transition to the paired return route if available,
-    // otherwise bounce on the same path (unpaired / fallback behaviour).
+    // ── Smooth deceleration approaching a station ─────────────────────────────
+    let effectiveSpeed = config.speedKmPerMs;
+    if (nextStop) {
+      const distToStop = train.direction === 1
+        ? nextStop.distanceAlong - train.distanceTravelled
+        : train.distanceTravelled - nextStop.distanceAlong;
+      if (distToStop >= 0 && distToStop < SLOW_ZONE_KM) {
+        // Linear: full speed at SLOW_ZONE_KM, minimum at platform edge.
+        effectiveSpeed = config.speedKmPerMs *
+          Math.max(distToStop / SLOW_ZONE_KM, MIN_SPEED_FACTOR);
+      }
+    }
+
+    // ── Move ──────────────────────────────────────────────────────────────────
+    let dist = train.distanceTravelled + train.direction * effectiveSpeed * dt;
+    let dir  = train.direction;
+
+    // ── Terminus: transition to partner route, or bounce ──────────────────────
     if (dist >= path.totalDistance) {
       const partnerPath = train.partnerRouteId !== null
         ? pathsMap.get(train.partnerRouteId)
         : undefined;
 
       if (partnerPath) {
-        // Determine which end of the partner path is geographically closest to
-        // our current position (the outbound terminus).  The stitcher picks the
-        // degree-1 node as the path start, which may be either end of the line.
-        // Checking proximity avoids teleportation when the partner's stitched
-        // path starts at the far terminus instead of the near one.
-        const myEnd = path.waypoints[path.waypoints.length - 1];
+        // The stitcher may start the partner path at either physical end.
+        // Pick the end that is geographically closest to our current position
+        // so the train transitions without teleportation.
+        const myEnd        = path.waypoints[path.waypoints.length - 1];
         const partnerFirst = partnerPath.waypoints[0];
         const partnerLast  = partnerPath.waypoints[partnerPath.waypoints.length - 1];
-        const fromStart = haversineKm(myEnd, partnerFirst) <= haversineKm(myEnd, partnerLast);
+        const fromStart    = haversineKm(myEnd, partnerFirst) <= haversineKm(myEnd, partnerLast);
 
         return {
           ...train,
@@ -565,32 +592,28 @@ export function tickSimulation(
           platform:          fromStart ? "A" : "B",
         };
       }
-      // Fallback: bounce direction
+      // Fallback: bounce on the same path
       dist = path.totalDistance;
-      dir = -1;
+      dir  = -1;
     } else if (dist <= 0) {
       dist = 0;
-      dir = 1;
+      dir  = 1;
     }
 
-    // Check proximity to next stop in direction of travel
-    const nextStop = findNextStop(path.stops, dist, dir);
-    if (
-      nextStop &&
-      Math.abs(dist - nextStop.distanceAlong) <= config.stationRadiusKm
-    ) {
-      // Terminus stations (first or last stop on the route) get the longer dwell.
-      const stopIndex = path.stops.indexOf(nextStop);
-      const isTerminus =
-        stopIndex === 0 || stopIndex === path.stops.length - 1;
+    // ── Station arrival ───────────────────────────────────────────────────────
+    // The train has decelerated to near-zero, so the < 10 m position correction
+    // is imperceptible.  Terminus stops get the longer dwell.
+    if (nextStop && Math.abs(dist - nextStop.distanceAlong) <= AT_STATION_KM) {
+      const stopIndex  = path.stops.indexOf(nextStop);
+      const isTerminus = stopIndex === 0 || stopIndex === path.stops.length - 1;
       return {
         ...train,
         distanceTravelled: nextStop.distanceAlong,
-        direction: dir,
-        status: "at_station",
-        currentStation: nextStop.stationName,
-        platform: dir === 1 ? "A" : "B",
-        dwellRemaining: isTerminus ? config.dwellTerminusMs : config.dwellMs,
+        direction:         dir,
+        status:            "at_station",
+        currentStation:    nextStop.stationName,
+        platform:          dir === 1 ? "A" : "B",
+        dwellRemaining:    isTerminus ? config.dwellTerminusMs : config.dwellMs,
       };
     }
 
@@ -672,18 +695,19 @@ export function getTrainAheadPos(
 /**
  * Find the nearest stop strictly ahead of `distanceTravelled` in the given direction.
  *
- * "Strictly ahead" means the stop's distanceAlong must be greater than
- * (direction=1) or less than (direction=-1) the current position by at least
- * SNAP_CLEAR km.  This prevents the re-snap loop that occurred when a train
- * resumed moving from a station: it was still within stationRadiusKm of the
- * same stop, so the old tolerance (±0.001 km) immediately returned the same
- * stop and the train was snapped back indefinitely.
+ * "Strictly ahead" means:
+ *   direction = +1 → stop.distanceAlong  >  distanceTravelled
+ *   direction = −1 → stop.distanceAlong  <  distanceTravelled
  *
- * SNAP_CLEAR is intentionally smaller than stationRadiusKm (0.15 km) so that
- * an approaching train is still detected well before it reaches the platform.
+ * No backward tolerance is applied.  The previous tolerance of ±0.001 km
+ * caused a re-snap loop: after a train's dwell ended it sat exactly at
+ * stop.distanceAlong, and the tolerance allowed the same stop to be returned
+ * again on the very next tick, snapping the train back indefinitely.
+ *
+ * The deceleration slow-zone (SLOW_ZONE_KM = 0.25 km) is far larger than
+ * any floating-point rounding, so approach detection is unaffected by removing
+ * the tolerance.
  */
-const SNAP_CLEAR = 0.005; // 5 m — must have moved this far past a stop to clear it
-
 function findNextStop(
   stops: RouteStop[],
   distanceTravelled: number,
@@ -692,15 +716,13 @@ function findNextStop(
   if (stops.length === 0) return null;
 
   if (direction === 1) {
-    // Moving forward — find the first stop that is strictly ahead of us
     for (const stop of stops) {
-      if (stop.distanceAlong > distanceTravelled - SNAP_CLEAR) return stop;
+      if (stop.distanceAlong > distanceTravelled) return stop;
     }
     return null;
   } else {
-    // Moving backward — find the last stop that is strictly behind us
     for (let i = stops.length - 1; i >= 0; i--) {
-      if (stops[i].distanceAlong < distanceTravelled + SNAP_CLEAR) return stops[i];
+      if (stops[i].distanceAlong < distanceTravelled) return stops[i];
     }
     return null;
   }
