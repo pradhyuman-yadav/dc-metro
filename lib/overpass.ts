@@ -23,8 +23,15 @@ export interface OverpassResponse {
   elements: OverpassElement[];
 }
 
-/** DC metro area bounding box [south, west, north, east] */
-export const DC_BBOX: [number, number, number, number] = [38.79, -77.25, 39.01, -76.87];
+/**
+ * DC Metro system bounding box [south, west, north, east].
+ * Covers the full WMATA rail network including all terminal stations:
+ *   South:  Franconia-Springfield (~38.770°N)
+ *   West:   Ashburn / Loudoun Gateway (~-77.484°W)
+ *   North:  Shady Grove (~39.120°N)
+ *   East:   Downtown Largo / Morgan Blvd (~-76.854°W)
+ */
+export const DC_BBOX: [number, number, number, number] = [38.76, -77.55, 39.13, -76.83];
 
 /**
  * WMATA Metro line colours from OSM colour tags.
