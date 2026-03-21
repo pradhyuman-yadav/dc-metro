@@ -18,6 +18,7 @@ vi.mock('next-themes', () => ({
 vi.mock('@/components/SubwayLayer', () => ({ default: () => null }));
 vi.mock('@/components/StationLayer', () => ({ default: () => null }));
 vi.mock('@/components/TrainLayer', () => ({ default: () => null }));
+vi.mock('@/components/TrainHoverLayer', () => ({ default: () => null }));
 vi.mock('@/components/SidePanel', () => ({ default: () => null }));
 vi.mock('@/components/LoadingScreen', () => ({ default: () => null }));
 vi.mock('@/hooks/useSubwayRoutes', () => ({

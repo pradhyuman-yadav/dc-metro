@@ -202,6 +202,20 @@ interface OverpassRelation {
   members?: Array<{ type: string; ref: number; role: string }>;
 }
 
+/**
+ * Manual corrections for OSM data quality issues.
+ * Some stations get wrong line assignments due to adjacent stations sharing
+ * entrance/platform nodes (e.g. Farragut North and Farragut West are one block
+ * apart and cross-contaminate each other's route memberships).
+ *
+ * Key = station name, Value = the exact route refs that serve it.
+ */
+const STATION_LINE_CORRECTIONS: Record<string, string[]> = {
+  "Farragut North":   ["RD"],
+  "Farragut West":    ["BL", "OR", "SV"],
+  "McPherson Square": ["BL", "OR", "SV"],
+};
+
 /** Converts the combined station+relation response into SubwayStation[] */
 export function parseStationResponse(
   data: OverpassResponse
@@ -221,6 +235,13 @@ export function parseStationResponse(
     (el): el is OverpassRelation =>
       el.type === "relation" && !EXCLUDED_RELATION_IDS.has(el.id)
   );
+
+  // Build map: route ref → colour (e.g. "RD" → "#BF0D3E")
+  const refToColour = new Map<string, string>();
+  for (const rel of relations) {
+    const ref = rel.tags?.["ref"];
+    if (ref) refToColour.set(ref, getSubwayColour(rel.tags?.["colour"]));
+  }
 
   // Build map: node id → set of line colours (from parent route relations)
   const coloursByNodeId = new Map<number, Set<string>>();
@@ -263,6 +284,18 @@ export function parseStationResponse(
         lng: node.lon,
         colours,
       });
+    }
+  }
+
+  // Step 3: apply manual corrections for known OSM data quality issues.
+  for (const [stationName, correctRefs] of Object.entries(STATION_LINE_CORRECTIONS)) {
+    const station = byName.get(stationName);
+    if (!station) continue;
+    const correctedColours = correctRefs
+      .map((ref) => refToColour.get(ref))
+      .filter((c): c is string => !!c);
+    if (correctedColours.length > 0) {
+      byName.set(stationName, { ...station, colours: correctedColours });
     }
   }
 

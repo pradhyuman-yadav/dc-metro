@@ -240,17 +240,28 @@ describe("mapStopsToRoute", () => {
     expect(enriched.stops).toHaveLength(0);
   });
 
-  it("matches regardless of station colour tag (proximity-only)", () => {
-    // Station is geographically on the Red route but has a different colour —
-    // should still be included because matching is proximity-based.
+  it("excludes a station with a non-matching colour even when geographically close", () => {
+    // A Blue-only station sitting on the Red route geometry must not become a Red stop.
+    // This guards against the Farragut North/West cross-contamination bug.
     const wrongColourStation: SubwayStation = {
-      id: 200, name: "Colourless Station",
-      lat: 38.9003, lng: -77.0297, // same position as STATION_A
-      colours: ["#009CDE"], // Blue line colour — irrelevant for matching
+      id: 200, name: "Blue Only Station",
+      lat: 38.9003, lng: -77.0297, // same position as STATION_A — well within 350 m
+      colours: ["#009CDE"], // Blue line colour only
     };
     const enriched = mapStopsToRoute(redPath, [wrongColourStation]);
+    expect(enriched.stops).toHaveLength(0);
+  });
+
+  it("includes a station with empty colours when geographically close (proximity fallback)", () => {
+    // Stations with no OSM colour data fall back to proximity-only matching.
+    const noColourStation: SubwayStation = {
+      id: 201, name: "Untagged Station",
+      lat: 38.9003, lng: -77.0297, // same position as STATION_A
+      colours: [],
+    };
+    const enriched = mapStopsToRoute(redPath, [noColourStation]);
     expect(enriched.stops).toHaveLength(1);
-    expect(enriched.stops[0].stationName).toBe("Colourless Station");
+    expect(enriched.stops[0].stationName).toBe("Untagged Station");
   });
 
   it("stops are sorted by distanceAlong", () => {

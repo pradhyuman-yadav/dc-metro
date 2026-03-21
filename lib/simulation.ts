@@ -424,6 +424,10 @@ export function mapStopsToRoute(
     // Only include this station if it lies on (or very near) this route's path
     if (bestDist > MAX_STATION_DIST_KM) continue;
 
+    // Skip stations whose line data explicitly excludes this route.
+    // Stations with empty colours (no OSM line data) fall through to proximity-only matching.
+    if (station.colours.length > 0 && !station.colours.includes(path.routeColour)) continue;
+
     stops.push({
       stationName: station.name,
       waypointIndex: bestIdx,
@@ -551,6 +555,31 @@ const MIN_HEADWAY_KM = 0.15;
  */
 const HARD_STOP_KM = 0.020;
 
+// ─── Multi-level station groups ───────────────────────────────────────────────
+//
+// These four WMATA stations have physically separate platforms on two levels.
+// Trains from different level groups must NOT block each other — a Red Line
+// train at Metro Center (level 0) and a Blue Line train (level 1) occupy
+// independent platforms and should be tracked with separate occupancy keys.
+//
+// Format: stationName → [[routeRefs on level 0], [routeRefs on level 1]]
+const MULTI_LEVEL_GROUPS = new Map<string, string[][]>([
+  ["Metro Center",            [["RD"],             ["BL", "OR", "SV"]]],
+  ["Gallery Place-Chinatown", [["RD"],             ["GR", "YL"]]],
+  ["L'Enfant Plaza",          [["BL", "OR", "SV"], ["GR", "YL"]]],
+  ["Fort Totten",             [["RD"],             ["GR", "YL"]]],
+]);
+
+/** Returns the station occupancy map key, incorporating level for multi-level stations. */
+function stationKey(stationName: string, routeRef: string, direction: number): string {
+  const groups = MULTI_LEVEL_GROUPS.get(stationName);
+  if (groups) {
+    const level = groups.findIndex((g) => g.includes(routeRef));
+    return `${stationName}:${level >= 0 ? level : 0}:${direction}`;
+  }
+  return `${stationName}:${direction}`;
+}
+
 // ─── Simulation tick ──────────────────────────────────────────────────────────
 
 /**
@@ -613,7 +642,7 @@ export function tickSimulation(
     posIndex.set(posKey, list);
 
     if (t.status === "at_station" && t.currentStation) {
-      stationOccupied.set(`${t.currentStation}:${t.direction}`, true);
+      stationOccupied.set(stationKey(t.currentStation, t.routeRef, t.direction), true);
     }
   }
   for (const list of posIndex.values()) {
@@ -730,7 +759,7 @@ export function tickSimulation(
 
     // ── Station arrival (with capacity guard) ─────────────────────────────────
     if (nextStop && Math.abs(dist - nextStop.distanceAlong) <= AT_STATION_KM) {
-      const occupancyKey = `${nextStop.stationName}:${dir}`;
+      const occupancyKey = stationKey(nextStop.stationName, train.routeRef, dir);
 
       // If the platform is already occupied by a train going the same direction,
       // hold position — don't enter.  The train is already near-zero speed from

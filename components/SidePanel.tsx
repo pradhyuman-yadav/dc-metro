@@ -1,11 +1,34 @@
 "use client";
 import { useState, useEffect, useMemo } from "react";
+import { motion, AnimatePresence } from "framer-motion";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { BonusesIncentivesCard } from "@/components/ui/animated-dashboard-card";
 import { AccordionCards } from "@/components/ui/expandable-card";
 import { getMetroServiceLabel } from "@/lib/simulation";
 import type { TrainState, StationPassengerState, RoutePath } from "@/lib/simulation";
 import type { SurgeEvent } from "@/hooks/useSimulation";
+
+function useMobile(): boolean {
+  const [isMobile, setIsMobile] = useState(false);
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return isMobile;
+}
+
+// WMATA multi-level intersecting stations — two physically separate platforms/levels.
+// Each entry: [stationName, [groupA routeRefs, groupB routeRefs]]
+// Count as 2 only when both groups have at least one active route serving that station.
+const MULTI_LEVEL_STATIONS: [string, [string[], string[]]][] = [
+  ["Metro Center",            [["RD"],            ["BL", "OR", "SV"]]],
+  ["Gallery Place-Chinatown", [["RD"],            ["GR", "YL"]]],
+  ["L'Enfant Plaza",          [["BL", "OR", "SV"], ["GR", "YL"]]],
+  ["Fort Totten",             [["RD"],            ["GR", "YL"]]],
+];
 
 // WMATA line colours → display names
 const LINE_META: Record<string, { label: string; colour: string }> = {
@@ -68,6 +91,8 @@ interface SidePanelProps {
   addTrain: (routeRef: string) => void;
   removeTrain: (routeRef: string) => void;
   stationsByLine: Array<[string, { colour: string; stops: { stationName: string; distanceAlong: number }[] }]>;
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
 }
 
 export default function SidePanel({
@@ -78,6 +103,8 @@ export default function SidePanel({
   addTrain,
   removeTrain,
   stationsByLine,
+  onZoomIn,
+  onZoomOut,
 }: SidePanelProps) {
   const movingCount   = trains.filter((t) => t.status === "moving").length;
   const dwellingCount = trains.filter((t) => t.status === "at_station").length;
@@ -93,7 +120,25 @@ export default function SidePanel({
     return m;
   }, [pathsMap]);
 
-  const totalStations = Array.from(stationCountByRef.values()).reduce((a, b) => a + b, 0);
+  const totalStations = useMemo(() => {
+    // Build: station name → set of routeRefs actively serving it
+    const stationRefs = new Map<string, Set<string>>();
+    for (const path of pathsMap.values()) {
+      for (const stop of path.stops) {
+        if (!stationRefs.has(stop.stationName)) stationRefs.set(stop.stationName, new Set());
+        stationRefs.get(stop.stationName)!.add(path.routeRef);
+      }
+    }
+    // Base: unique physical station names
+    let count = stationRefs.size;
+    // Add +1 for each multi-level station where both level groups are active
+    for (const [name, [groupA, groupB]] of MULTI_LEVEL_STATIONS) {
+      if (!stationRefs.has(name)) continue;
+      const active = stationRefs.get(name)!;
+      if (groupA.some((r) => active.has(r)) && groupB.some((r) => active.has(r))) count += 1;
+    }
+    return count;
+  }, [pathsMap]);
 
   // Passenger totals
   const totalAboard  = trains.reduce((s, t) => s + (t.passengers ?? 0), 0);
@@ -164,23 +209,11 @@ export default function SidePanel({
   // Stations panel open state
   const [stationsOpen, setStationsOpen] = useState(false);
 
-  return (
-    <div
-      className="no-scrollbar"
-      style={{
-        position: "absolute",
-        top: 12,
-        right: 12,
-        zIndex: 1000,
-        width: 296,
-        display: "flex",
-        flexDirection: "column",
-        gap: 10,
-        maxHeight: "calc(100vh - 24px)",
-        overflowY: "auto",
-        overflowX: "hidden",
-      }}
-    >
+  const isMobile = useMobile();
+  const [sheetOpen, setSheetOpen] = useState(false);
+
+  const cardStack = (
+    <>
       {/* ── Header card ──────────────────────────────────────────────────────── */}
       <div style={cardStyle}>
         {/* Title row */}
@@ -300,19 +333,6 @@ export default function SidePanel({
                 <span style={{ fontSize: 10, color: "var(--color-muted-foreground)", whiteSpace: "nowrap" }}>
                   {trainsCnt} trains · {aboard} pax
                 </span>
-                {/* +/- controls */}
-                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                  <ControlBtn
-                    label="-"
-                    disabled={trainsCnt <= 1}
-                    onClick={() => removeTrain(ref)}
-                  />
-                  <ControlBtn
-                    label="+"
-                    disabled={trainsCnt >= maxTrains}
-                    onClick={() => addTrain(ref)}
-                  />
-                </div>
               </div>
             );
           })}
@@ -384,7 +404,7 @@ export default function SidePanel({
             fontSize: 10, fontWeight: 700, textTransform: "uppercase",
             letterSpacing: "0.06em", color: "var(--color-muted-foreground)", margin: 0,
           }}>
-            Stations by Line ({stationsByLine.reduce((n, [, v]) => n + v.stops.length, 0)} total)
+            Stations by Line ({totalStations} total)
           </p>
           <span style={{
             fontSize: 14, color: "var(--color-muted-foreground)",
@@ -464,65 +484,456 @@ export default function SidePanel({
         </div>
       )}
 
-      {/* ── About card ───────────────────────────────────────────────────────── */}
+      {/* ── Train controls (mobile only — desktop uses the bottom bar) ─────── */}
       <div style={cardStyle}>
         <p style={{
           fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 12,
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)", marginBottom: 10,
         }}>
-          About This Project
+          Train Controls
         </p>
-
-        <p style={{ fontSize: 11, lineHeight: 1.65, color: "var(--color-foreground)", marginBottom: 12 }}>
-          A fully autonomous DC Metro simulation running 24/7 — trains move, board passengers,
-          and respond to real-world events <em>without any human intervention</em>.
-          Every visitor sees the same live state, powered by a single server-side simulation loop.
-        </p>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 14 }}>
-          <AboutLine
-            title="Real track geometry"
-            detail="Live OpenStreetMap Overpass API — actual WMATA waypoints, not hardcoded paths" />
-          <AboutLine
-            title="Physics engine"
-            detail="Headway enforcement, deceleration zones, station approach, terminus switching at 88 km/h" />
-          <AboutLine
-            title="Passenger model"
-            detail="Per-station capacity tiers (300–1200), boarding/alighting dynamics, surge multipliers 3–5×" />
-          <AboutLine
-            title="Server-side singleton"
-            detail="Node.js setInterval tick at 100 ms — one authoritative loop, broadcast via SSE to all clients" />
-          <AboutLine
-            title="Persistent state"
-            detail="SQLite (better-sqlite3) persists every 60 s — trains resume exact position after server restart" />
-          <AboutLine
-            title="WMATA service hours"
-            detail="Simulation pauses midnight–5 AM EST matching real schedule; resumes automatically at open" />
-          <AboutLine
-            title="Zero manual operation"
-            detail="Surge events fire autonomously every 45–90 min; trains self-regulate spacing and platform occupancy" />
-          <AboutLine
-            title="Stack"
-            detail="Next.js 15 · React 19 · Leaflet · Framer Motion · better-sqlite3 · Vitest · Docker" />
-        </div>
-
-        <div style={{
-          borderTop: "1px solid var(--color-border)", paddingTop: 12,
-          display: "flex", flexDirection: "column", gap: 4,
-        }}>
-          <p style={{ fontSize: 11, lineHeight: 1.55, color: "var(--color-foreground)" }}>
-            Built by{" "}
-            <span style={{ fontWeight: 700 }}>Pradhyuman</span>
-            {" "}as a personal showcase of production-grade autonomous systems:
-            real data pipelines, server-side simulation, and zero-intervention 24/7 operation.
-          </p>
-          <p style={{ fontSize: 10, color: "var(--color-muted-foreground)", lineHeight: 1.5 }}>
-            This project demonstrates skills in full-stack engineering, real-time systems, geospatial data,
-            and agentic software design — built independently, from scratch.
-          </p>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {activeRefs.map((ref) => {
+            const meta = LINE_META[ref];
+            const colour = meta?.colour ?? "#666";
+            const label = meta?.label ?? ref;
+            const trainsCnt = trains.filter((t) => t.routeRef === ref).length;
+            const staCnt = stationCountByRef.get(ref) ?? 0;
+            const maxTrains = Math.max(1, staCnt - 1);
+            return (
+              <div key={ref} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ flexShrink: 0, width: 10, height: 10, borderRadius: "50%", background: colour }} />
+                <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: "var(--color-foreground)" }}>{label}</span>
+                <span style={{ fontSize: 10, color: "var(--color-muted-foreground)", whiteSpace: "nowrap" }}>{trainsCnt} trains</span>
+                <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
+                  <ControlBtn label="−" disabled={trainsCnt <= 1}        onClick={() => removeTrain(ref)} />
+                  <ControlBtn label="+" disabled={trainsCnt >= maxTrains} onClick={() => addTrain(ref)} />
+                </div>
+              </div>
+            );
+          })}
         </div>
       </div>
+
+    </>
+  );
+
+  if (!isMobile) {
+    return (
+      <>
+        {/* ── Right panel ───────────────────────────────────────────────────── */}
+        <div
+          className="no-scrollbar"
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            zIndex: 1000,
+            width: 296,
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+            maxHeight: "calc(100vh - 24px)",
+            overflowY: "auto",
+            overflowX: "hidden",
+          }}
+        >
+          {cardStack}
+        </div>
+
+        {/* ── Left about panel ──────────────────────────────────────────────── */}
+        <AboutPanel />
+
+        {/* ── Bottom train controls bar ─────────────────────────────────────── */}
+        <TrainControlsBar
+          onZoomIn={onZoomIn}
+          onZoomOut={onZoomOut}
+        />
+      </>
+    );
+  }
+
+  return (
+    <>
+      <AnimatePresence>
+        {!sheetOpen && (
+          <SheetHandle key="handle" onClick={() => setSheetOpen(true)} />
+        )}
+      </AnimatePresence>
+      <AnimatePresence>
+        {sheetOpen && (
+          <BottomSheet key="sheet" onClose={() => setSheetOpen(false)}>
+            {cardStack}
+            <AboutCardMobile />
+          </BottomSheet>
+        )}
+      </AnimatePresence>
+    </>
+  );
+}
+
+// ─── Bottom train controls bar (desktop) ─────────────────────────────────────
+
+function TrainControlsBar({
+  onZoomIn,
+  onZoomOut,
+}: {
+  onZoomIn?: () => void;
+  onZoomOut?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        bottom: 32,
+        left: 296,   // clears the About panel (12px margin + 272px width + 12px gap)
+        right: 320,  // clears the right panel (12px margin + 296px width + 12px gap)
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 4,
+        background: "var(--card, rgba(255,255,255,0.95))",
+        border: "1px solid var(--color-border, rgba(0,0,0,0.1))",
+        borderRadius: 12,
+        padding: "8px 14px",
+        boxShadow: "0 2px 12px rgba(0,0,0,0.12)",
+      }}
+    >
+      <span style={{ fontSize: 9, fontWeight: 600, color: "var(--color-muted-foreground)", textTransform: "uppercase", letterSpacing: "0.05em" }}>Zoom</span>
+      <ControlBtn label="−" onClick={onZoomOut ?? (() => {})} disabled={!onZoomOut} />
+      <ControlBtn label="+" onClick={onZoomIn  ?? (() => {})} disabled={!onZoomIn}  />
     </div>
+  );
+}
+
+// ─── About card for mobile bottom sheet ──────────────────────────────────────
+
+function AboutCardMobile() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div style={cardStyle}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        style={{
+          width: "100%", display: "flex", alignItems: "center",
+          justifyContent: "space-between", background: "none", border: "none",
+          cursor: "pointer", padding: 0, marginBottom: open ? 14 : 0,
+        }}
+      >
+        <span style={{
+          fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const,
+          letterSpacing: "0.06em", color: "var(--color-muted-foreground)",
+        }}>
+          About This Project
+        </span>
+        <span style={{
+          fontSize: 13, color: "var(--color-muted-foreground)",
+          transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          transition: "transform 0.22s ease", display: "inline-block", lineHeight: 1,
+        }}>
+          ▾
+        </span>
+      </button>
+      {open && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          <p style={{ fontSize: 11, lineHeight: 1.7, color: "var(--color-foreground)", margin: 0 }}>
+            Three fully independent systems — <em>trains</em>, <em>passengers</em>, and <em>track infrastructure</em> —
+            run autonomously with zero human intervention. Pure emergent behavior.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
+            <AboutLine title="Train physics"        detail="Headway enforcement, deceleration zones, and station approach — 100 ms ticks" />
+            <AboutLine title="Passenger model"      detail="Dynamic boarding/alighting, capacity tiers, and surge multipliers 3–5×" />
+            <AboutLine title="Live geometry"        detail="Real WMATA waypoints from OpenStreetMap Overpass API" />
+            <AboutLine title="Stack"                detail="Next.js 15 · React 19 · Leaflet · Framer Motion · better-sqlite3" />
+          </div>
+          <p style={{ fontSize: 11, fontWeight: 600, color: "var(--color-foreground)", margin: 0 }}>
+            Built by Pradhyuman
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Left-side About panel (desktop) ─────────────────────────────────────────
+
+function AboutPanel() {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 12,
+        left: 12,
+        zIndex: 1000,
+        width: 272,
+      }}
+    >
+      <div style={cardStyle}>
+        {/* Header / toggle */}
+        <button
+          onClick={() => setOpen((v) => !v)}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            marginBottom: open ? 14 : 0,
+          }}
+        >
+          <span style={{
+            fontSize: 10, fontWeight: 700, textTransform: "uppercase" as const,
+            letterSpacing: "0.06em", color: "var(--color-muted-foreground)",
+          }}>
+            About This Project
+          </span>
+          <span style={{
+            fontSize: 13,
+            color: "var(--color-muted-foreground)",
+            transform: open ? "rotate(180deg)" : "rotate(0deg)",
+            transition: "transform 0.22s ease",
+            display: "inline-block",
+            lineHeight: 1,
+          }}>
+            ▾
+          </span>
+        </button>
+
+        <AnimatePresence initial={false}>
+          {open && (
+            <motion.div
+              key="about-content"
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.24, ease: "easeInOut" }}
+              style={{ overflow: "hidden" }}
+            >
+              <div
+                className="no-scrollbar"
+                style={{
+                  maxHeight: "calc(100vh - 120px)",
+                  overflowY: "auto",
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 12,
+                }}
+              >
+                <p style={{ fontSize: 11, lineHeight: 1.7, color: "var(--color-foreground)", margin: 0 }}>
+                  Three fully independent systems — <em>trains</em>, <em>passengers</em>, and <em>track infrastructure</em> —
+                  run autonomously and interact in real time, 24/7, with zero human intervention.
+                  No scripted sequences. Pure emergent behavior.
+                </p>
+
+                {/* System pillars */}
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 6 }}>
+                  {[
+                    { label: "Train Physics", sub: "Independent agents" },
+                    { label: "Passenger Model", sub: "Per-station dynamics" },
+                    { label: "Track Network", sub: "Live OSM geometry" },
+                  ].map(({ label, sub }) => (
+                    <div key={label} style={{
+                      background: "var(--color-muted)",
+                      borderRadius: 8, padding: "8px 6px", textAlign: "center",
+                    }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, color: "var(--color-foreground)", lineHeight: 1.3 }}>{label}</div>
+                      <div style={{ fontSize: 9, color: "var(--color-muted-foreground)", marginTop: 2 }}>{sub}</div>
+                    </div>
+                  ))}
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <AboutLine title="Emergent cohesion"        detail="Trains, passengers, and surge events run on separate loops — yet self-regulate into a coherent, realistic system without central coordination" />
+                  <AboutLine title="Train physics engine"     detail="Headway enforcement, hard-stop gaps, smooth deceleration zones, station approach, and terminus bounce — all computed every 100 ms" />
+                  <AboutLine title="Autonomous passengers"    detail="300–1200 capacity tiers per station, dynamic boarding/alighting, surge multipliers 3–5×, firing independently of train state" />
+                  <AboutLine title="Live track geometry"      detail="Fetched from OpenStreetMap Overpass API — real WMATA waypoints stitched via topology graph BFS, not hardcoded coordinates" />
+                  <AboutLine title="Surge event engine"       detail="Autonomous surge events fire every 45–90 min, spike demand at stations, and expire on their own — trains respond without being told to" />
+                  <AboutLine title="Persistent world state"   detail="SQLite snapshots every 60 s — trains resume exact km position and passenger count after any server restart" />
+                  <AboutLine title="Single source of truth"   detail="One Node.js server loop broadcasts authoritative state via SSE — every visitor sees the same live world simultaneously" />
+                  <AboutLine title="Stack"                    detail="Next.js 15 · React 19 · Leaflet · Framer Motion · better-sqlite3 · Vitest · Docker" />
+                </div>
+
+                <div style={{
+                  borderTop: "1px solid var(--color-border)", paddingTop: 12,
+                  display: "flex", flexDirection: "column", gap: 4,
+                }}>
+                  <p style={{ fontSize: 11, lineHeight: 1.55, color: "var(--color-foreground)", margin: 0 }}>
+                    Built by <span style={{ fontWeight: 700 }}>Pradhyuman</span> — a demonstration of
+                    production-grade autonomous systems engineering: multi-agent coordination,
+                    real data pipelines, and emergent behavior at scale.
+                  </p>
+                  <p style={{ fontSize: 10, color: "var(--color-muted-foreground)", lineHeight: 1.5, margin: 0 }}>
+                    Every subsystem was designed to operate independently, yet together they produce
+                    a simulation indistinguishable from a real transit network — built from scratch,
+                    running continuously, requiring no maintenance.
+                  </p>
+                </div>
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
+    </div>
+  );
+}
+
+// ─── Mobile bottom sheet components ──────────────────────────────────────────
+
+function SheetHandle({ onClick }: { onClick: () => void }) {
+  return (
+    <motion.button
+      onClick={onClick}
+      initial={{ y: 40, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      exit={{ y: 40, opacity: 0 }}
+      transition={{ duration: 0.22 }}
+      style={{
+        position: "fixed",
+        bottom: 0,
+        left: 0,
+        right: 0,
+        zIndex: 1001,
+        background: "var(--card, rgba(255,255,255,0.97))",
+        borderTop: "1px solid var(--color-border)",
+        borderRadius: "16px 16px 0 0",
+        padding: "14px 20px 20px",
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: 10,
+        cursor: "pointer",
+        boxShadow: "0 -4px 20px rgba(0,0,0,0.12)",
+        width: "100%",
+      }}
+    >
+      {/* Drag indicator */}
+      <div style={{
+        width: 40, height: 4, borderRadius: 2,
+        background: "var(--color-muted-foreground)",
+        opacity: 0.35,
+      }} />
+      {/* Title row */}
+      <div style={{
+        width: "100%",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+      }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+          <span style={{
+            fontSize: 14, fontWeight: 700,
+            color: "var(--color-foreground)", lineHeight: 1.2,
+          }}>
+            DC Metro Live
+          </span>
+          <span style={{
+            fontSize: 10, color: "var(--color-muted-foreground)",
+          }}>
+            Tap to open dashboard
+          </span>
+        </div>
+        <span style={{
+          fontSize: 18, color: "var(--color-muted-foreground)",
+          lineHeight: 1,
+        }}>
+          ↑
+        </span>
+      </div>
+    </motion.button>
+  );
+}
+
+function BottomSheet({
+  onClose,
+  children,
+}: {
+  onClose: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <>
+      {/* Backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        exit={{ opacity: 0 }}
+        transition={{ duration: 0.2 }}
+        onClick={onClose}
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 1001,
+          background: "rgba(0,0,0,0.35)",
+        }}
+      />
+
+      {/* Sheet */}
+      <motion.div
+        drag="y"
+        dragConstraints={{ top: 0 }}
+        dragElastic={{ top: 0.1, bottom: 0.4 }}
+        onDragEnd={(_e, info) => {
+          if (info.offset.y > 100 || info.velocity.y > 500) {
+            onClose();
+          }
+        }}
+        initial={{ y: "100%" }}
+        animate={{ y: 0 }}
+        exit={{ y: "100%" }}
+        transition={{ type: "spring", damping: 30, stiffness: 300 }}
+        className="no-scrollbar"
+        style={{
+          position: "fixed",
+          bottom: 0,
+          left: 0,
+          right: 0,
+          height: "85vh",
+          zIndex: 1002,
+          background: "var(--card, rgba(255,255,255,0.98))",
+          borderRadius: "16px 16px 0 0",
+          boxShadow: "0 -4px 24px rgba(0,0,0,0.18)",
+          display: "flex",
+          flexDirection: "column",
+          overflow: "hidden",
+        }}
+      >
+        {/* Drag indicator */}
+        <div style={{
+          flexShrink: 0,
+          padding: "12px 0 8px",
+          display: "flex",
+          justifyContent: "center",
+          cursor: "grab",
+        }}>
+          <div style={{
+            width: 40, height: 4, borderRadius: 2,
+            background: "var(--color-muted-foreground)",
+            opacity: 0.4,
+          }} />
+        </div>
+
+        {/* Scrollable content */}
+        <div
+          className="no-scrollbar"
+          style={{
+            flex: 1,
+            overflowY: "auto",
+            padding: "0 12px 32px",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {children}
+        </div>
+      </motion.div>
+    </>
   );
 }
 

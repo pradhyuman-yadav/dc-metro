@@ -76,7 +76,7 @@ EXPOSE 3009
 
 # Health check — verifies the Next.js server is responding
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-  CMD wget -qO- http://localhost:3009/api/subway/trains || exit 1
+  CMD wget -qO- http://127.0.0.1:3009/api/subway/trains || exit 1
 
 # next start (standalone) reads PORT from env
 CMD ["node", "server.js"]
