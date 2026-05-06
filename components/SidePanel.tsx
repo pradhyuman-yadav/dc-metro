@@ -1,12 +1,12 @@
 "use client";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ThemeToggle } from "@/components/ui/theme-toggle";
 import { BonusesIncentivesCard } from "@/components/ui/animated-dashboard-card";
 import { AccordionCards } from "@/components/ui/expandable-card";
 import { getMetroServiceLabel } from "@/lib/simulation";
 import type { TrainState, StationPassengerState, RoutePath } from "@/lib/simulation";
-import type { SurgeEvent } from "@/hooks/useSimulation";
+import type { SurgeEvent, ConnectionStatus } from "@/hooks/useSimulation";
 
 function useMobile(): boolean {
   const [isMobile, setIsMobile] = useState(false);
@@ -83,13 +83,72 @@ const cardStyle: React.CSSProperties = {
   padding: 20,
 };
 
+// ─── Toast ───────────────────────────────────────────────────────────────────
+
+interface Toast { id: number; message: string }
+
+let _toastId = 0;
+function useToasts() {
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const addToast = useCallback((message: string) => {
+    const id = ++_toastId;
+    setToasts((prev) => [...prev, { id, message }]);
+    setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
+  }, []);
+  return { toasts, addToast };
+}
+
+// ─── SidePanelProps ──────────────────────────────────────────────────────────
+
+// ─── Sparkline ────────────────────────────────────────────────────────────────
+
+function Sparkline({ data, colour, width = 60, height = 18 }: {
+  data: number[];
+  colour: string;
+  width?: number;
+  height?: number;
+}) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const pts = data
+    .map((v, i) => {
+      const x = (i / (data.length - 1)) * width;
+      const y = height - (v / max) * (height - 2) - 1;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      width={width}
+      height={height}
+      style={{ verticalAlign: "middle", overflow: "visible" }}
+      aria-hidden="true"
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={colour}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.8}
+      />
+    </svg>
+  );
+}
+
+// ─── SidePanelProps ──────────────────────────────────────────────────────────
+
 interface SidePanelProps {
   trains: TrainState[];
   pathsMap: Map<number, RoutePath>;
   stationPassengers: Map<string, StationPassengerState>;
   surgeEvents: SurgeEvent[];
-  addTrain: (routeRef: string) => void;
-  removeTrain: (routeRef: string) => void;
+  connectionStatus: ConnectionStatus;
+  addTrain: (routeRef: string, onError?: (err: Error) => void) => void;
+  removeTrain: (routeRef: string, onError?: (err: Error) => void) => void;
+  /** Last 60 s of total-waiting-passengers samples (1 per second) */
+  passengerHistory?: number[];
   stationsByLine: Array<[string, { colour: string; stops: { stationName: string; distanceAlong: number }[] }]>;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
@@ -100,12 +159,15 @@ export default function SidePanel({
   pathsMap,
   stationPassengers,
   surgeEvents,
+  connectionStatus,
   addTrain,
   removeTrain,
   stationsByLine,
+  passengerHistory = [],
   onZoomIn,
   onZoomOut,
 }: SidePanelProps) {
+  const { toasts, addToast } = useToasts();
   const movingCount   = trains.filter((t) => t.status === "moving").length;
   const dwellingCount = trains.filter((t) => t.status === "at_station").length;
 
@@ -206,8 +268,9 @@ export default function SidePanel({
   // Accordion state for line info
   const [lineInfoActive, setLineInfoActive] = useState<string | null>(null);
 
-  // Stations panel open state
+  // Stations panel open state + search filter
   const [stationsOpen, setStationsOpen] = useState(false);
+  const [stationSearch, setStationSearch] = useState("");
 
   const isMobile = useMobile();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -226,7 +289,11 @@ export default function SidePanel({
               by Pradhyuman
             </div>
           </div>
-          <ThemeToggle />
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            {/* SSE connection status badge */}
+            <ConnectionBadge status={connectionStatus} />
+            <ThemeToggle />
+          </div>
         </div>
 
         {/* EST clock + service status */}
@@ -291,6 +358,18 @@ export default function SidePanel({
           <NetworkStat label="Track covered"   value={`${totalTrackKm} km`} />
           <NetworkStat label="At capacity"     value={`${atCapacity}`} unit="trains" />
         </div>
+        {passengerHistory.length >= 2 && (
+          <div style={{
+            marginTop: 10, paddingTop: 10,
+            borderTop: "1px solid var(--color-border)",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <span style={{ fontSize: 9, color: "var(--color-muted-foreground)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Waiting (60 s)
+            </span>
+            <Sparkline data={passengerHistory} colour="#6366f1" width={70} height={20} />
+          </div>
+        )}
         {busiestStation !== "—" && (
           <div style={{
             marginTop: 10, paddingTop: 10,
@@ -346,34 +425,47 @@ export default function SidePanel({
       </div>
 
       {/* ── Surge events card (only when active) ─────────────────────────────── */}
-      {surgeEvents.length > 0 && (
-        <div style={{ ...cardStyle, borderColor: "rgba(234,179,8,0.4)", background: "rgba(254,252,232,0.97)" }}>
-          <p style={{
-            fontSize: 10, fontWeight: 700, textTransform: "uppercase",
-            letterSpacing: "0.06em", color: "#92400e", marginBottom: 10,
-          }}>
-            Active Surge Events
-          </p>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {surgeEvents.map((event) => {
-              const minsLeft = Math.max(0, Math.ceil((event.expiresAt - Date.now()) / 60_000));
-              return (
-                <div key={event.id} style={{
-                  fontSize: 11, color: "#78350f",
-                  padding: "4px 0",
-                  borderBottom: "1px solid rgba(234,179,8,0.2)",
-                  display: "flex", justifyContent: "space-between", alignItems: "center",
-                }}>
-                  <span>{event.label}</span>
-                  <span style={{ fontSize: 10, opacity: 0.7, flexShrink: 0, marginLeft: 8 }}>
-                    {minsLeft}m left
-                  </span>
-                </div>
-              );
-            })}
+      {(() => {
+        const now = Date.now();
+        // Filter out events that have already expired client-side
+        const activeSurges = surgeEvents.filter((e) => e.expiresAt > now);
+        if (activeSurges.length === 0) return null;
+        return (
+          <div style={{ ...cardStyle, borderColor: "rgba(234,179,8,0.4)", background: "rgba(254,252,232,0.97)" }}>
+            <p style={{
+              fontSize: 10, fontWeight: 700, textTransform: "uppercase",
+              letterSpacing: "0.06em", color: "#92400e", marginBottom: 10,
+            }}>
+              Active Surge Events
+            </p>
+            <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+              {activeSurges.map((event) => {
+                const msLeft = event.expiresAt - now;
+                const minsLeft = Math.max(0, Math.ceil(msLeft / 60_000));
+                const endingSoon = msLeft < 60_000;
+                return (
+                  <div key={event.id} style={{
+                    fontSize: 11, color: "#78350f",
+                    padding: "4px 0",
+                    borderBottom: "1px solid rgba(234,179,8,0.2)",
+                    display: "flex", justifyContent: "space-between", alignItems: "center",
+                  }}>
+                    <span>{event.label}</span>
+                    <span style={{
+                      fontSize: 10, flexShrink: 0, marginLeft: 8,
+                      fontWeight: endingSoon ? 700 : 400,
+                      color: endingSoon ? "#b45309" : "#78350f",
+                      opacity: endingSoon ? 1 : 0.7,
+                    }}>
+                      {minsLeft}m left
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* ── Line info accordion ───────────────────────────────────────────────── */}
       <div style={cardStyle}>
@@ -416,13 +508,45 @@ export default function SidePanel({
         </button>
 
         {stationsOpen && (
-          <div className="no-scrollbar" style={{ maxHeight: 280, overflowY: "auto" }}>
+          <>
+            {/* Station search input */}
+            <div style={{ marginBottom: 8 }}>
+              <input
+                type="text"
+                placeholder="Search stations…"
+                value={stationSearch}
+                onChange={(e) => setStationSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "5px 10px",
+                  fontSize: 11,
+                  borderRadius: 8,
+                  border: "1px solid var(--color-border)",
+                  background: "var(--background, #fff)",
+                  color: "var(--color-foreground)",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div className="no-scrollbar" style={{ maxHeight: 260, overflowY: "auto" }}>
             {stationsByLine.length === 0 && (
               <p style={{ fontSize: 11, color: "var(--color-muted-foreground)", fontStyle: "italic" }}>
                 Loading...
               </p>
             )}
-            {stationsByLine.map(([ref, line]) => (
+            {stationsByLine
+              .map(([ref, line]) => {
+                const filteredStops = stationSearch.trim()
+                  ? line.stops.filter((s) =>
+                      s.stationName.toLowerCase().includes(stationSearch.toLowerCase())
+                    )
+                  : line.stops;
+                return [ref, { ...line, stops: filteredStops }] as [string, typeof line];
+              })
+              .filter(([, line]) => line.stops.length > 0)
+              .map(([ref, line]) => (
               <div key={ref} style={{ marginBottom: 10 }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 6,
@@ -461,7 +585,8 @@ export default function SidePanel({
                 ))}
               </div>
             ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
 
@@ -506,8 +631,8 @@ export default function SidePanel({
                 <span style={{ flex: 1, fontSize: 11, fontWeight: 600, color: "var(--color-foreground)" }}>{label}</span>
                 <span style={{ fontSize: 10, color: "var(--color-muted-foreground)", whiteSpace: "nowrap" }}>{trainsCnt} trains</span>
                 <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-                  <ControlBtn label="−" disabled={trainsCnt <= 1}        onClick={() => removeTrain(ref)} />
-                  <ControlBtn label="+" disabled={trainsCnt >= maxTrains} onClick={() => addTrain(ref)} />
+                  <ControlBtn label="−" disabled={trainsCnt <= 1}        onClick={() => removeTrain(ref, (err) => addToast(`Remove failed: ${err.message}`))} />
+                  <ControlBtn label="+" disabled={trainsCnt >= maxTrains} onClick={() => addTrain(ref, (err) => addToast(`Add failed: ${err.message}`))} />
                 </div>
               </div>
             );
@@ -521,6 +646,7 @@ export default function SidePanel({
   if (!isMobile) {
     return (
       <>
+        <ToastStack toasts={toasts} />
         {/* ── Right panel ───────────────────────────────────────────────────── */}
         <div
           className="no-scrollbar"
@@ -555,6 +681,7 @@ export default function SidePanel({
 
   return (
     <>
+      <ToastStack toasts={toasts} />
       <AnimatePresence>
         {!sheetOpen && (
           <SheetHandle key="handle" onClick={() => setSheetOpen(true)} />
@@ -934,6 +1061,84 @@ function BottomSheet({
         </div>
       </motion.div>
     </>
+  );
+}
+
+// ─── Connection badge ─────────────────────────────────────────────────────────
+
+function ConnectionBadge({ status }: { status: ConnectionStatus }) {
+  const cfg = {
+    connected:    { dot: "#22c55e", label: "Live" },
+    reconnecting: { dot: "#f59e0b", label: "Reconnecting" },
+    error:        { dot: "#ef4444", label: "Error" },
+  }[status];
+
+  return (
+    <span
+      data-testid="connection-badge"
+      data-status={status}
+      style={{
+        display: "inline-flex", alignItems: "center", gap: 4,
+        fontSize: 9, fontWeight: 700, textTransform: "uppercase",
+        letterSpacing: "0.05em", padding: "2px 6px", borderRadius: 8,
+        background: "var(--color-muted, rgba(0,0,0,0.06))",
+        color: "var(--color-muted-foreground)",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <span style={{
+        width: 5, height: 5, borderRadius: "50%", flexShrink: 0,
+        background: cfg.dot,
+        boxShadow: status === "reconnecting" ? `0 0 0 2px ${cfg.dot}40` : "none",
+      }} />
+      {cfg.label}
+    </span>
+  );
+}
+
+// ─── Toast stack ─────────────────────────────────────────────────────────────
+
+function ToastStack({ toasts }: { toasts: Array<{ id: number; message: string }> }) {
+  if (toasts.length === 0) return null;
+  return (
+    <div
+      data-testid="toast-stack"
+      style={{
+        position: "fixed",
+        bottom: 80,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 2000,
+        display: "flex",
+        flexDirection: "column-reverse",
+        gap: 6,
+        pointerEvents: "none",
+      }}
+    >
+      <AnimatePresence>
+        {toasts.map((t) => (
+          <motion.div
+            key={t.id}
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 8 }}
+            transition={{ duration: 0.2 }}
+            style={{
+              background: "rgba(239,68,68,0.95)",
+              color: "#fff",
+              fontSize: 12,
+              fontWeight: 600,
+              padding: "7px 14px",
+              borderRadius: 10,
+              boxShadow: "0 2px 12px rgba(0,0,0,0.2)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {t.message}
+          </motion.div>
+        ))}
+      </AnimatePresence>
+    </div>
   );
 }
 

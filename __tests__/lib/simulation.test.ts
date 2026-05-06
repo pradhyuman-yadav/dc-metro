@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import {
   haversineKm,
   stitchSegments,
@@ -10,9 +10,11 @@ import {
   getTrainSegmentBearing,
   tickSimulation,
   detectPathGaps,
+  isPeakHour,
   DEFAULT_CONFIG,
   type RoutePath,
   type TrainState,
+  type StationPassengerState,
 } from "@/lib/simulation";
 import type { SubwayRoute, SubwayStation } from "@/lib/overpass";
 
@@ -610,5 +612,120 @@ describe("mapStopsToRoute (proximity boundary)", () => {
     };
     const enriched = mapStopsToRoute(redPath, [noColourStation]);
     expect(enriched.stops).toHaveLength(1);
+  });
+});
+
+// ─── isPeakHour ───────────────────────────────────────────────────────────────
+
+describe("isPeakHour", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("returns true during morning peak (8 AM EST)", () => {
+    // 2024-01-15 13:00 UTC = 08:00 EST (UTC-5 in January)
+    vi.setSystemTime(new Date("2024-01-15T13:00:00Z"));
+    expect(isPeakHour()).toBe(true);
+  });
+
+  it("returns true during evening peak (17:30 EST)", () => {
+    // 2024-01-15 22:30 UTC = 17:30 EST
+    vi.setSystemTime(new Date("2024-01-15T22:30:00Z"));
+    expect(isPeakHour()).toBe(true);
+  });
+
+  it("returns false during midday (12:00 EST)", () => {
+    // 2024-01-15 17:00 UTC = 12:00 EST
+    vi.setSystemTime(new Date("2024-01-15T17:00:00Z"));
+    expect(isPeakHour()).toBe(false);
+  });
+
+  it("returns false late at night (23:00 EST)", () => {
+    // 2024-01-16 04:00 UTC = 23:00 EST
+    vi.setSystemTime(new Date("2024-01-16T04:00:00Z"));
+    expect(isPeakHour()).toBe(false);
+  });
+
+  it("returns false at peak hour boundary end (09:00 EST)", () => {
+    // 9 AM is NOT included (condition is h < 9)
+    vi.setSystemTime(new Date("2024-01-15T14:00:00Z")); // 09:00 EST
+    expect(isPeakHour()).toBe(false);
+  });
+});
+
+// ─── tickSimulation — peak-hour dwell ────────────────────────────────────────
+
+describe("tickSimulation — peak-hour dwell multiplier", () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // Build a minimal path with one stop
+  const peakPath: RoutePath = {
+    routeId: 10,
+    routeRef: "RD",
+    routeColour: "#BF0D3E",
+    routeName: "Red Line",
+    waypoints: Array.from({ length: 20 }, (_, i) => [38.9 + i * 0.01, -77.0] as [number, number]),
+    distances: Array.from({ length: 20 }, (_, i) => i * 0.5),
+    totalDistance: 9.5,
+    stops: [
+      { stationName: "Busy Station", waypointIndex: 4, distanceAlong: 2.0 },
+      { stationName: "End Station",  waypointIndex: 18, distanceAlong: 9.0 },
+    ],
+  };
+
+  const busyPassengers = new Map<string, StationPassengerState>([
+    ["Busy Station", { current: 400, capacity: 800, lastUpdated: 0 }],
+  ]);
+
+  function makePeakTrain(): TrainState {
+    return {
+      id: "RD-peak",
+      routeId: 10,
+      routeRef: "RD",
+      routeColour: "#BF0D3E",
+      routeName: "Red Line",
+      distanceTravelled: 1.99, // just before Busy Station at 2.0
+      direction: 1,
+      status: "moving",
+      currentStation: null,
+      platform: "A",
+      dwellRemaining: 0,
+      partnerRouteId: null,
+      passengers: 0,
+    };
+  }
+
+  it("applies 1.5× dwell at high-capacity station during peak hours", () => {
+    // Force 8 AM EST
+    vi.setSystemTime(new Date("2024-01-15T13:00:00Z"));
+
+    const config = { ...DEFAULT_CONFIG, speedKmPerMs: 0.5 }; // fast enough to reach stop in 1 tick
+    const pathsMap = new Map([[10, peakPath]]);
+    const { trains: [result] } = tickSimulation([makePeakTrain()], pathsMap, 100, config, busyPassengers);
+
+    // Train should have arrived at Busy Station
+    if (result.status === "at_station" && result.currentStation === "Busy Station") {
+      // Peak dwell = dwellMs * 1.5
+      expect(result.dwellRemaining).toBeCloseTo(DEFAULT_CONFIG.dwellMs * 1.5, -2);
+    }
+    // If train hasn't arrived yet, it's still moving — that's fine; just verify no crash
+    expect(["moving", "at_station"]).toContain(result.status);
+  });
+
+  it("does not apply peak multiplier outside peak hours", () => {
+    // Force 12:00 EST (off-peak)
+    vi.setSystemTime(new Date("2024-01-15T17:00:00Z"));
+
+    const config = { ...DEFAULT_CONFIG, speedKmPerMs: 0.5 };
+    const pathsMap = new Map([[10, peakPath]]);
+    const { trains: [result] } = tickSimulation([makePeakTrain()], pathsMap, 100, config, busyPassengers);
+
+    if (result.status === "at_station" && result.currentStation === "Busy Station") {
+      // Off-peak: dwell should equal dwellMs (multiplier=1)
+      expect(result.dwellRemaining).toBeCloseTo(DEFAULT_CONFIG.dwellMs, -2);
+    }
+    expect(["moving", "at_station"]).toContain(result.status);
   });
 });

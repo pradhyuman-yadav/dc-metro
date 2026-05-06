@@ -107,13 +107,20 @@ class SimServer {
 
   // ── Public API ──────────────────────────────────────────────────────────────
 
-  /** Idempotent: resolves immediately if already initialised. */
+  /** Idempotent: resolves immediately if already initialised.
+   *  Resets the in-flight promise on failure so the next caller can retry —
+   *  important when transient upstream errors (e.g. Overpass 406) caused the
+   *  first attempt to fail before the underlying fix was in place. */
   async ensureInitialized(): Promise<void> {
     if (this._initialized) return;
     if (this._initPromise) return this._initPromise;
-    this._initPromise = this._init();
-    await this._initPromise;
-    this._initialized = true;
+    this._initPromise = this._init()
+      .then(() => { this._initialized = true; })
+      .catch((err) => {
+        this._initPromise = null; // allow next caller to retry
+        throw err;
+      });
+    return this._initPromise;
   }
 
   subscribe(cb: (data: string) => void): () => void {
@@ -155,6 +162,9 @@ class SimServer {
       passengers: 0,
     };
     this.trains = [...this.trains, newTrain];
+    // Persist immediately so the new train survives a crash before the next 60 s snapshot
+    this._persist().catch(() => {/* best-effort */});
+    this._broadcast();
   }
 
   removeTrain(routeRef: string): void {
@@ -165,6 +175,8 @@ class SimServer {
     if (routeTrains.length <= 1) return;
     const last = routeTrains[routeTrains.length - 1];
     this.trains = this.trains.filter((t) => t.id !== last.id);
+    this._persist().catch(() => {/* best-effort */});
+    this._broadcast();
   }
 
   // ── Initialisation ──────────────────────────────────────────────────────────

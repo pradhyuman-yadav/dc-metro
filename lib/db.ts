@@ -15,6 +15,8 @@ export function getDb(): Database.Database {
   db = new Database(DB_PATH);
 
   db.pragma("journal_mode = WAL");
+  // NORMAL synchronous is safe with WAL and roughly 2× faster than FULL
+  db.pragma("synchronous = NORMAL");
   db.pragma("foreign_keys = ON");
 
   db.exec(`
@@ -75,6 +77,12 @@ export function getDb(): Database.Database {
       current_passengers INTEGER NOT NULL DEFAULT 0,
       updated_at         REAL    NOT NULL
     );
+  `);
+
+  // Index for common join: stations → station_lines
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_station_lines_station
+    ON station_lines (station_id);
   `);
 
   // Safe migration: add passengers column to existing train_states tables

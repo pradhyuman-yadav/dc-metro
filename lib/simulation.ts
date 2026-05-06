@@ -402,24 +402,73 @@ const MAX_STATION_DIST_KM = 0.35;
  * Proximity-only matching is more robust: a station belongs to a route if and
  * only if it lies physically close to the route's stitched waypoint path.
  */
+/**
+ * Build a spatial grid index over route waypoints for fast nearest-neighbour lookup.
+ * Buckets each waypoint into a 0.005° × 0.005° cell (~500 m at DC latitude).
+ * Reduces station-to-route matching from O(stations × waypoints) to O(stations × 25)
+ * by only checking the 5×5 neighbourhood of cells around each station.
+ */
+function buildWaypointIndex(waypoints: [number, number][]): Map<string, number[]> {
+  const CELL = 0.005;
+  const index = new Map<string, number[]>();
+  for (let i = 0; i < waypoints.length; i++) {
+    const key = `${Math.floor(waypoints[i][0] / CELL)},${Math.floor(waypoints[i][1] / CELL)}`;
+    const bucket = index.get(key) ?? [];
+    bucket.push(i);
+    index.set(key, bucket);
+  }
+  return index;
+}
+
+/** Find the nearest waypoint index using the prebuilt spatial grid. Fallback to linear scan. */
+function nearestWaypointIdx(
+  lat: number,
+  lng: number,
+  waypoints: [number, number][],
+  index: Map<string, number[]>
+): { idx: number; dist: number } {
+  const CELL = 0.005;
+  const cLat = Math.floor(lat / CELL);
+  const cLng = Math.floor(lng / CELL);
+  let bestIdx = 0;
+  let bestDist = Infinity;
+  // Search 5×5 neighbourhood (±2 cells ≈ ±1 km)
+  for (let dLat = -2; dLat <= 2; dLat++) {
+    for (let dLng = -2; dLng <= 2; dLng++) {
+      const bucket = index.get(`${cLat + dLat},${cLng + dLng}`);
+      if (!bucket) continue;
+      for (const i of bucket) {
+        const d = haversineKm(waypoints[i], [lat, lng]);
+        if (d < bestDist) { bestDist = d; bestIdx = i; }
+      }
+    }
+  }
+  // Fallback if neighbourhood is empty (very sparse route)
+  if (bestDist === Infinity) {
+    for (let i = 0; i < waypoints.length; i++) {
+      const d = haversineKm(waypoints[i], [lat, lng]);
+      if (d < bestDist) { bestDist = d; bestIdx = i; }
+    }
+  }
+  return { idx: bestIdx, dist: bestDist };
+}
+
 export function mapStopsToRoute(
   path: RoutePath,
   stations: SubwayStation[]
 ): RoutePath {
   if (path.waypoints.length === 0) return path;
 
+  // Build spatial index once per route (O(waypoints)) rather than scanning
+  // all waypoints for every station (O(stations × waypoints)).
+  const waypointIndex = buildWaypointIndex(path.waypoints);
+
   const stops: RouteStop[] = [];
 
   for (const station of stations) {
-    let bestIdx = 0;
-    let bestDist = Infinity;
-    for (let i = 0; i < path.waypoints.length; i++) {
-      const d = haversineKm(path.waypoints[i], [station.lat, station.lng]);
-      if (d < bestDist) {
-        bestDist = d;
-        bestIdx = i;
-      }
-    }
+    const { idx: bestIdx, dist: bestDist } = nearestWaypointIdx(
+      station.lat, station.lng, path.waypoints, waypointIndex
+    );
 
     // Only include this station if it lies on (or very near) this route's path
     if (bestDist > MAX_STATION_DIST_KM) continue;
@@ -575,7 +624,10 @@ function stationKey(stationName: string, routeRef: string, direction: number): s
   const groups = MULTI_LEVEL_GROUPS.get(stationName);
   if (groups) {
     const level = groups.findIndex((g) => g.includes(routeRef));
-    return `${stationName}:${level >= 0 ? level : 0}:${direction}`;
+    // Known route: use level index so trains on the same physical level block each other.
+    // Unknown route: use routeRef as the key so it never collides with any known level.
+    const levelKey = level >= 0 ? String(level) : `ref:${routeRef}`;
+    return `${stationName}:${levelKey}:${direction}`;
   }
   return `${stationName}:${direction}`;
 }
@@ -784,6 +836,11 @@ export function tickSimulation(
         );
       }
 
+      const baseDwell = isTerminus ? config.dwellTerminusMs : config.dwellMs;
+      const dwellMs = isTerminus
+        ? baseDwell
+        : Math.round(baseDwell * peakDwellMultiplier(nextStop.stationName, stationPassengers));
+
       return {
         ...train,
         passengers:        Math.min(TRAIN_CAPACITY, train.passengers + boarding),
@@ -792,7 +849,7 @@ export function tickSimulation(
         status:            "at_station" as TrainStatus,
         currentStation:    nextStop.stationName,
         platform:          dir === 1 ? "A" : "B",
-        dwellRemaining:    isTerminus ? config.dwellTerminusMs : config.dwellMs,
+        dwellRemaining:    dwellMs,
       };
     }
 
@@ -907,6 +964,39 @@ function findNextStop(
     }
     return null;
   }
+}
+
+// ─── Peak-hour detection ──────────────────────────────────────────────────────
+
+/**
+ * Returns true during WMATA peak hours: 7–9 AM and 5–7 PM Eastern time.
+ * Used to apply a 1.5× dwell multiplier at high-capacity interchange stations
+ * so trains linger longer during rush hour — producing realistic slowdowns
+ * without requiring a timetable.
+ */
+export function isPeakHour(): boolean {
+  try {
+    const now = new Date();
+    const hStr = now.toLocaleString("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      hour12: false,
+    });
+    const h = parseInt(hStr, 10);
+    return (h >= 7 && h < 9) || (h >= 17 && h < 19);
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Dwell multiplier at a station — 1.5× during peak hours for busy interchanges
+ * (capacity > 600), otherwise 1×.
+ */
+function peakDwellMultiplier(stationName: string, stationPassengers: Map<string, StationPassengerState>): number {
+  const sp = stationPassengers.get(stationName);
+  if (sp && sp.capacity > 600 && isPeakHour()) return 1.5;
+  return 1;
 }
 
 // ─── Metro service hours ──────────────────────────────────────────────────────
