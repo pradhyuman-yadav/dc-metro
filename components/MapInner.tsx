@@ -103,10 +103,20 @@ export default function MapInner() {
 
   const anyLoading = loading || stationsLoading;
 
-  // Live snapshot of trains for the side panel (refreshed every second)
+  // Live snapshot of trains + passenger history buffer (refreshed every second)
   const [trainSnapshot, setTrainSnapshot] = useState<ReturnType<typeof trainsRef.current.slice>>([]);
+  const [passengerHistory, setPassengerHistory] = useState<number[]>([]);
+  // Use a ref so the interval closure reads current stationPassengers without recreating
+  const stationPassengersRef = useRef(stationPassengers);
+  useEffect(() => { stationPassengersRef.current = stationPassengers; }, [stationPassengers]);
   useEffect(() => {
-    const id = setInterval(() => setTrainSnapshot([...trainsRef.current]), 1000);
+    const id = setInterval(() => {
+      setTrainSnapshot([...trainsRef.current]);
+      const total = Math.floor(
+        Array.from(stationPassengersRef.current.values()).reduce((s, v) => s + v.current, 0)
+      );
+      setPassengerHistory((prev) => [...prev.slice(-59), total]);
+    }, 1000);
     return () => clearInterval(id);
   }, [trainsRef]);
 
@@ -197,6 +207,7 @@ export default function MapInner() {
         removeTrain={removeTrain}
         connectionStatus={connectionStatus}
         stationsByLine={stationsByLine}
+        passengerHistory={passengerHistory}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}
       />
@@ -246,7 +257,7 @@ function TrainTooltip({
   info: HoveredTrainInfo;
   isDark: boolean;
 }) {
-  const { train, containerX, containerY, nextStation, prevStation } = info;
+  const { train, containerX, containerY, nextStation, prevStation, etaSeconds, speedKmh } = info;
   const meta = LINE_META[train.routeRef];
   const colour = meta?.colour ?? train.routeColour ?? "#888";
   const lineName = meta?.label ?? train.routeRef;
@@ -256,6 +267,9 @@ function TrainTooltip({
   const barColour = loadPct >= 85 ? "#ef4444" : loadPct >= 60 ? "#f59e0b" : "#22c55e";
   const dwellSec = isAtStation ? Math.ceil(train.dwellRemaining / 1000) : 0;
   const direction = train.platform === "A" ? "Inbound" : "Outbound";
+  const etaLabel = etaSeconds !== null
+    ? etaSeconds < 60 ? `~${etaSeconds}s` : `~${Math.ceil(etaSeconds / 60)}m`
+    : null;
 
   // Tooltip size ~220px wide, ~auto height — position above+right of train
   const OFFSET_X = 14;
@@ -318,6 +332,19 @@ function TrainTooltip({
         {isAtStation
           ? `At ${train.currentStation ?? "Platform"}${dwellSec > 0 ? ` · ${dwellSec}s` : ""}`
           : `Moving · ${direction}`}
+      </div>
+
+      {/* Speed + ETA */}
+      <div style={{
+        display: "flex", justifyContent: "space-between", alignItems: "center",
+        fontSize: 10, color: muted,
+      }}>
+        <span>{speedKmh} km/h</span>
+        {etaLabel && nextStation && (
+          <span style={{ fontWeight: 600, color: fg }}>
+            {etaLabel} → {nextStation.split("-")[0].trim()}
+          </span>
+        )}
       </div>
 
       {/* Stations */}

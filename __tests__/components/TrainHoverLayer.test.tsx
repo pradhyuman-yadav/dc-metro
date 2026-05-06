@@ -72,6 +72,18 @@ describe("getAdjacentStations — forward direction (direction = 1)", () => {
     expect(next).toBeNull();
     expect(prev).toBeNull();
   });
+
+  it("returns correct nextDistKm (forward)", () => {
+    const train = makeTrain(1.5, 1); // next stop at d=2
+    const { nextDistKm } = getAdjacentStations(train, path);
+    expect(nextDistKm).toBeCloseTo(0.5);
+  });
+
+  it("returns null nextDistKm when no next stop", () => {
+    const train = makeTrain(4.5, 1); // past last stop
+    const { nextDistKm } = getAdjacentStations(train, path);
+    expect(nextDistKm).toBeNull();
+  });
 });
 
 describe("getAdjacentStations — reverse direction (direction = -1)", () => {
@@ -102,5 +114,12 @@ describe("getAdjacentStations — reverse direction (direction = -1)", () => {
     const { prev } = getAdjacentStations(train, path);
     // forward scan for d >= 5: none in [0,1,2,3,4]
     expect(prev).toBeNull();
+  });
+
+  it("returns correct nextDistKm (reverse)", () => {
+    // direction=-1, d=2.5: next stop is d=2 (Stop 3), dist = 2.5 - 2 = 0.5
+    const train = makeTrain(2.5, -1);
+    const { nextDistKm } = getAdjacentStations(train, path);
+    expect(nextDistKm).toBeCloseTo(0.5);
   });
 });

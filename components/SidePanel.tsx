@@ -100,6 +100,45 @@ function useToasts() {
 
 // ─── SidePanelProps ──────────────────────────────────────────────────────────
 
+// ─── Sparkline ────────────────────────────────────────────────────────────────
+
+function Sparkline({ data, colour, width = 60, height = 18 }: {
+  data: number[];
+  colour: string;
+  width?: number;
+  height?: number;
+}) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const pts = data
+    .map((v, i) => {
+      const x = (i / (data.length - 1)) * width;
+      const y = height - (v / max) * (height - 2) - 1;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(" ");
+  return (
+    <svg
+      width={width}
+      height={height}
+      style={{ verticalAlign: "middle", overflow: "visible" }}
+      aria-hidden="true"
+    >
+      <polyline
+        points={pts}
+        fill="none"
+        stroke={colour}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        opacity={0.8}
+      />
+    </svg>
+  );
+}
+
+// ─── SidePanelProps ──────────────────────────────────────────────────────────
+
 interface SidePanelProps {
   trains: TrainState[];
   pathsMap: Map<number, RoutePath>;
@@ -108,6 +147,8 @@ interface SidePanelProps {
   connectionStatus: ConnectionStatus;
   addTrain: (routeRef: string, onError?: (err: Error) => void) => void;
   removeTrain: (routeRef: string, onError?: (err: Error) => void) => void;
+  /** Last 60 s of total-waiting-passengers samples (1 per second) */
+  passengerHistory?: number[];
   stationsByLine: Array<[string, { colour: string; stops: { stationName: string; distanceAlong: number }[] }]>;
   onZoomIn?: () => void;
   onZoomOut?: () => void;
@@ -122,6 +163,7 @@ export default function SidePanel({
   addTrain,
   removeTrain,
   stationsByLine,
+  passengerHistory = [],
   onZoomIn,
   onZoomOut,
 }: SidePanelProps) {
@@ -226,8 +268,9 @@ export default function SidePanel({
   // Accordion state for line info
   const [lineInfoActive, setLineInfoActive] = useState<string | null>(null);
 
-  // Stations panel open state
+  // Stations panel open state + search filter
   const [stationsOpen, setStationsOpen] = useState(false);
+  const [stationSearch, setStationSearch] = useState("");
 
   const isMobile = useMobile();
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -315,6 +358,18 @@ export default function SidePanel({
           <NetworkStat label="Track covered"   value={`${totalTrackKm} km`} />
           <NetworkStat label="At capacity"     value={`${atCapacity}`} unit="trains" />
         </div>
+        {passengerHistory.length >= 2 && (
+          <div style={{
+            marginTop: 10, paddingTop: 10,
+            borderTop: "1px solid var(--color-border)",
+            display: "flex", alignItems: "center", justifyContent: "space-between",
+          }}>
+            <span style={{ fontSize: 9, color: "var(--color-muted-foreground)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+              Waiting (60 s)
+            </span>
+            <Sparkline data={passengerHistory} colour="#6366f1" width={70} height={20} />
+          </div>
+        )}
         {busiestStation !== "—" && (
           <div style={{
             marginTop: 10, paddingTop: 10,
@@ -453,13 +508,45 @@ export default function SidePanel({
         </button>
 
         {stationsOpen && (
-          <div className="no-scrollbar" style={{ maxHeight: 280, overflowY: "auto" }}>
+          <>
+            {/* Station search input */}
+            <div style={{ marginBottom: 8 }}>
+              <input
+                type="text"
+                placeholder="Search stations…"
+                value={stationSearch}
+                onChange={(e) => setStationSearch(e.target.value)}
+                style={{
+                  width: "100%",
+                  padding: "5px 10px",
+                  fontSize: 11,
+                  borderRadius: 8,
+                  border: "1px solid var(--color-border)",
+                  background: "var(--background, #fff)",
+                  color: "var(--color-foreground)",
+                  outline: "none",
+                  boxSizing: "border-box",
+                }}
+              />
+            </div>
+
+            <div className="no-scrollbar" style={{ maxHeight: 260, overflowY: "auto" }}>
             {stationsByLine.length === 0 && (
               <p style={{ fontSize: 11, color: "var(--color-muted-foreground)", fontStyle: "italic" }}>
                 Loading...
               </p>
             )}
-            {stationsByLine.map(([ref, line]) => (
+            {stationsByLine
+              .map(([ref, line]) => {
+                const filteredStops = stationSearch.trim()
+                  ? line.stops.filter((s) =>
+                      s.stationName.toLowerCase().includes(stationSearch.toLowerCase())
+                    )
+                  : line.stops;
+                return [ref, { ...line, stops: filteredStops }] as [string, typeof line];
+              })
+              .filter(([, line]) => line.stops.length > 0)
+              .map(([ref, line]) => (
               <div key={ref} style={{ marginBottom: 10 }}>
                 <div style={{
                   display: "flex", alignItems: "center", gap: 6,
@@ -498,7 +585,8 @@ export default function SidePanel({
                 ))}
               </div>
             ))}
-          </div>
+            </div>
+          </>
         )}
       </div>
 
