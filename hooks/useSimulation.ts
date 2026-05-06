@@ -21,6 +21,9 @@ export interface SurgeEvent {
   expiresAt: number;
 }
 
+/** Current state of the SSE connection to the simulation server. */
+export type ConnectionStatus = "connected" | "reconnecting" | "error";
+
 export interface UseSimulationResult {
   /** Live train states — written by SSE handler, read by RAF render loop */
   trainsRef: MutableRefObject<TrainState[]>;
@@ -29,10 +32,12 @@ export interface UseSimulationResult {
   stationPassengers: Map<string, StationPassengerState>;
   /** Currently active surge events from server */
   surgeEvents: SurgeEvent[];
+  /** Current SSE connection health — useful for showing a status badge in the UI */
+  connectionStatus: ConnectionStatus;
   /** Add one train to a route (enforced server-side) */
-  addTrain: (routeRef: string) => void;
+  addTrain: (routeRef: string, onError?: (err: Error) => void) => void;
   /** Remove the last train from a route (enforced server-side) */
-  removeTrain: (routeRef: string) => void;
+  removeTrain: (routeRef: string, onError?: (err: Error) => void) => void;
 }
 
 /**
@@ -70,13 +75,20 @@ export function useSimulation(
   const trainsRef = useRef<TrainState[]>([]);
   const [stationPassengers, setStationPassengers] = useState<Map<string, StationPassengerState>>(new Map());
   const [surgeEvents, setSurgeEvents] = useState<SurgeEvent[]>([]);
+  const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>("reconnecting");
 
   useEffect(() => {
     if (routes.length === 0) return;
 
     const es = new EventSource("/api/subway/stream");
 
+    es.onopen = () => {
+      setConnectionStatus("connected");
+    };
+
     es.onmessage = (e: MessageEvent<string>) => {
+      // Mark connected on first successful message (covers browsers that don't fire onopen)
+      setConnectionStatus("connected");
       try {
         const msg = JSON.parse(e.data) as {
           trains: TrainState[];
@@ -93,28 +105,48 @@ export function useSimulation(
     };
 
     es.onerror = () => {
-      // EventSource auto-reconnects — no manual retry needed
+      // EventSource auto-reconnects — reflect the transient state in the UI
+      setConnectionStatus("reconnecting");
     };
 
-    return () => es.close();
+    return () => {
+      es.close();
+      setConnectionStatus("reconnecting");
+    };
   }, [routes.length]);
 
   // ── Train management (POST to server singleton) ───────────────────────────
-  const addTrain = useCallback((routeRef: string) => {
+  const addTrain = useCallback((routeRef: string, onError?: (err: Error) => void) => {
     fetch("/api/subway/trains/add", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ routeRef }),
-    }).catch(() => {/* best-effort */});
+    }).then((res) => {
+      if (!res.ok && onError) {
+        res.json().then((body) => {
+          onError(new Error(body?.error ?? `HTTP ${res.status}`));
+        }).catch(() => onError(new Error(`HTTP ${res.status}`)));
+      }
+    }).catch((err: unknown) => {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    });
   }, []);
 
-  const removeTrain = useCallback((routeRef: string) => {
+  const removeTrain = useCallback((routeRef: string, onError?: (err: Error) => void) => {
     fetch("/api/subway/trains/remove", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ routeRef }),
-    }).catch(() => {/* best-effort */});
+    }).then((res) => {
+      if (!res.ok && onError) {
+        res.json().then((body) => {
+          onError(new Error(body?.error ?? `HTTP ${res.status}`));
+        }).catch(() => onError(new Error(`HTTP ${res.status}`)));
+      }
+    }).catch((err: unknown) => {
+      onError?.(err instanceof Error ? err : new Error(String(err)));
+    });
   }, []);
 
-  return { trainsRef, pathsMap, stationPassengers, surgeEvents, addTrain, removeTrain };
+  return { trainsRef, pathsMap, stationPassengers, surgeEvents, connectionStatus, addTrain, removeTrain };
 }

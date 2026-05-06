@@ -98,7 +98,7 @@ export default function MapInner() {
   const { stations, loading: stationsLoading, error: stationsError } = useSubwayStations();
   const { resolvedTheme } = useTheme();
 
-  const { trainsRef, pathsMap, stationPassengers, surgeEvents, addTrain, removeTrain } =
+  const { trainsRef, pathsMap, stationPassengers, surgeEvents, connectionStatus, addTrain, removeTrain } =
     useSimulation(routes, stations);
 
   const anyLoading = loading || stationsLoading;
@@ -195,6 +195,7 @@ export default function MapInner() {
         surgeEvents={surgeEvents}
         addTrain={addTrain}
         removeTrain={removeTrain}
+        connectionStatus={connectionStatus}
         stationsByLine={stationsByLine}
         onZoomIn={handleZoomIn}
         onZoomOut={handleZoomOut}

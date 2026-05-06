@@ -130,13 +130,19 @@ export function pairRoutes(routes: SubwayRoute[]): Map<number, number> {
   return pairs;
 }
 
+// Overpass API blocks the default Node.js `User-Agent: node` with a 406 response.
+// All server-side Overpass fetches must include a descriptive User-Agent.
+const OVERPASS_HEADERS = {
+  "User-Agent": "dc-metro-sim/1.0 (+https://github.com/pradhyuman-yadav/dc-metro)",
+};
+
 /** Fetches DC Metro subway routes from Overpass (single call for all of DC) */
 export async function fetchSubwayRoutes(
   bbox: [number, number, number, number] = DC_BBOX
 ): Promise<SubwayRoute[]> {
   const query = buildSubwayQuery(bbox);
   const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: OVERPASS_HEADERS });
   if (!res.ok) throw new Error(`Overpass API error: ${res.status}`);
   const data: OverpassResponse = await res.json();
   return parseSubwayResponse(data);
@@ -308,7 +314,7 @@ export async function fetchSubwayStations(
 ): Promise<SubwayStation[]> {
   const query = buildStationQuery(bbox);
   const url = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-  const res = await fetch(url);
+  const res = await fetch(url, { headers: OVERPASS_HEADERS });
   if (!res.ok) throw new Error(`Overpass API error: ${res.status}`);
   const data: OverpassResponse = await res.json();
   return parseStationResponse(data);

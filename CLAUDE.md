@@ -1,90 +1,68 @@
-# Agent Instructions
+# CLAUDE.md
 
-You're working inside the **WAT framework** (Workflows, Agents, Tools). This architecture separates concerns so that probabilistic AI handles reasoning while deterministic code handles execution. That separation is what makes this system reliable.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## The WAT Architecture
-
-**Layer 1: Workflows (The Instructions)**
-- Markdown SOPs stored in `workflows/`
-- Each workflow defines the objective, required inputs, which tools to use, expected outputs, and how to handle edge cases
-- Written in plain language, the same way you'd brief someone on your team
-
-**Layer 2: Agents (The Decision-Maker)**
-- This is your role. You're responsible for intelligent coordination.
-- Read the relevant workflow, run tools in the correct sequence, handle failures gracefully, and ask clarifying questions when needed
-- You connect intent to execution without trying to do everything yourself
-- Example: If you need to pull data from a website, don't attempt it directly. Read `workflows/scrape_website.md`, figure out the required inputs, then execute `tools/scrape_single_site.py`
-
-**Layer 3: Tools (The Execution)**
-- Python scripts in `tools/` that do the actual work
-- API calls, data transformations, file operations, database queries
-- Credentials and API keys are stored in `.env`
-- These scripts are consistent, testable, and fast
-
-**Why this matters:** When AI tries to handle every step directly, accuracy drops fast. If each step is 90% accurate, you're down to 59% success after just five steps. By offloading execution to deterministic scripts, you stay focused on orchestration and decision-making where you excel.
-
-## How to Operate
-
-**1. Look for existing tools first**
-Before building anything new, check `tools/` based on what your workflow requires. Only create new scripts when nothing exists for that task.
-
-**2. Learn and adapt when things fail**
-When you hit an error:
-- Read the full error message and trace
-- Fix the script and retest (if it uses paid API calls or credits, check with me before running again)
-- Document what you learned in the workflow (rate limits, timing quirks, unexpected behavior)
-- Example: You get rate-limited on an API, so you dig into the docs, discover a batch endpoint, refactor the tool to use it, verify it works, then update the workflow so this never happens again
-
-**3. Keep workflows current**
-Workflows should evolve as you learn. When you find better methods, discover constraints, or encounter recurring issues, update the workflow. That said, don't create or overwrite workflows without asking unless I explicitly tell you to. These are your instructions and need to be preserved and refined, not tossed after one use.
-
-## The Self-Improvement Loop
-
-Every failure is a chance to make the system stronger:
-1. Identify what broke
-2. Fix the tool
-3. Verify the fix works
-4. Update the workflow with the new approach
-5. Move on with a more robust system
-
-This loop is how the framework improves over time.
-
-## File Structure
-
-**What goes where:**
-- **Deliverables**: Final outputs go to cloud services (Google Sheets, Slides, etc.) where I can access them directly
-- **Intermediates**: Temporary processing files that can be regenerated
-
-**Directory layout:**
-```
-.tmp/           # Temporary files (scraped data, intermediate exports). Regenerated as needed.
-tools/          # Python scripts for deterministic execution
-workflows/      # Markdown SOPs defining what to do and how
-.env            # API keys and environment variables (NEVER store secrets anywhere else)
-credentials.json, token.json  # Google OAuth (gitignored)
-```
-
-**Core principle:** Local files are just for processing. Anything I need to see or use lives in cloud services. Everything in `.tmp/` is disposable.
-
-## Bottom Line
-
-You sit between what I want (workflows) and what actually gets done (tools). Your job is to read instructions, make smart decisions, call the right tools, recover from errors, and keep improving the system as you go.
-
-Stay pragmatic. Stay reliable. Keep learning.
-
----
-
-## Post-Iteration Verification
-
-After **every** code change, run the test suite before considering the iteration complete:
+## Commands
 
 ```bash
-npm test
-```
-
-All tests must pass (exit 0) before moving to the next step. If any test fails, fix the regression before proceeding. This ensures no feature is silently broken across iterations.
-
-To run tests with coverage:
-```bash
+npm run dev          # Next.js dev server with Turbopack (http://localhost:3000)
+npm run build        # Production build
+npm test             # Run all 265 Vitest tests
+npm run test:watch   # Watch mode
 npm run test:coverage
+
+# Docker
+docker build -t dc-metro .
+docker run -p 3009:3009 -v dc-metro-data:/app/data dc-metro
 ```
+
+Run a single test file:
+```bash
+npx vitest run __tests__/lib/simulation.test.ts
+```
+
+**Post-change rule:** Run `npm test` after every code change. All tests must pass (exit 0) before proceeding.
+
+## Architecture
+
+DC Metro Live is a real-time transit simulation. One authoritative Node.js singleton ticks a physics engine every 100 ms and broadcasts state to all clients via Server-Sent Events. Clients render only — no local simulation.
+
+### Server-side flow
+
+`lib/sim-server.ts` holds a global singleton (`global.__dcMetroSim`) that owns the live `TrainState[]` array. It calls `tickSimulation()` every 100 ms, then SSE-broadcasts the result through `/api/subway/stream`.
+
+`lib/simulation.ts` — pure function: `tickSimulation(trains, paths, passengers, config, dt) → TrainState[]`. No side effects. All physics lives here (speed, deceleration, headway, dwell, boarding/alighting, surge).
+
+`lib/overpass.ts` — fetches Metro line geometry from OpenStreetMap Overpass API, stitches disconnected `way` segments into continuous polylines via BFS (`stitchSegments`), computes cumulative km marks. 24-hour TTL cache in SQLite.
+
+`lib/db.ts` — SQLite via `better-sqlite3` in WAL mode. Stores Overpass responses, stitched paths, live train snapshots (every 60 s), and station passenger state. DB file: `data/subway.db` (Docker volume).
+
+`lib/stations.ts` — station CRUD + 350 m proximity + line-colour matching. Three stations have hardcoded corrections in `STATION_LINE_CORRECTIONS` (Farragut North → Red only; Farragut West, McPherson Square → BL/OR/SV only).
+
+Multi-level stations (Metro Center, Gallery Place, L'Enfant Plaza, Fort Totten) have independent occupancy keys per physical level so trains on different lines don't block each other.
+
+### Client-side flow
+
+`hooks/useSimulation.ts` opens an `EventSource` to `/api/subway/stream` and exposes the live `TrainState[]` ref, plus `addTrain`/`removeTrain` helpers.
+
+`hooks/useSubwayRoutes.ts` and `hooks/useSubwayStations.ts` fetch static geometry once on mount.
+
+`components/MapInner.tsx` composes all layers inside a Leaflet map. Train positions are rendered on an HTML5 Canvas (`TrainLayer.tsx`) via `requestAnimationFrame` — not as DOM elements — to handle 60+ objects at 60 fps without thrashing. Stations use Leaflet `CircleMarker`. Routes use Leaflet `Polyline`.
+
+`components/TrainHoverLayer.tsx` detects mouse proximity to canvas train positions and shows a floating tooltip (line, status, dwell countdown, prev/next station, passenger load bar).
+
+### Key invariants
+
+- `tickSimulation` is pure — never mutate inputs, always return new state
+- `Map.tsx` uses `dynamic(..., { ssr: false })` — Leaflet requires browser globals
+- All API routes are `force-dynamic` (no Next.js static caching)
+- Station snap radius: 0.15 km; headway enforcement: 0.15 km; slow zone: 0.25 km
+- Train capacity: 1 050 passengers; terminus dwell: 5 min; regular dwell: 60 s
+
+## Testing
+
+Tests use Vitest + jsdom + `@testing-library/react`. Coverage spans simulation physics, Overpass parser, DB operations, all API routes, hooks, and components. `vitest.setup.ts` configures `@testing-library/jest-dom` matchers.
+
+## Deployment
+
+`next.config.ts` sets `output: 'standalone'` and externalises `better-sqlite3` (native binary). The Dockerfile is three-stage Alpine: deps → builder → runner. Port 3009. `data/` is a named Docker volume for DB persistence across restarts.
