@@ -1,0 +1,56 @@
+name: Build, Push & Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+permissions:
+  contents: read
+  packages: write   # required to push to ghcr.io
+
+jobs:
+  build-push-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # ── Docker layer cache (speeds up repeated builds ~3×) ──────────────────
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # ── Authenticate to GitHub Container Registry ───────────────────────────
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Build & push ────────────────────────────────────────────────────────
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/dc-metro:latest
+            ghcr.io/${{ github.repository_owner }}/dc-metro:${{ github.sha }}
+          # Reuse layers from the previous push to keep CI fast
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/dc-metro:buildcache
+          cache-to:   type=registry,ref=ghcr.io/${{ github.repository_owner }}/dc-metro:buildcache,mode=max
+
+      # ── Trigger Portainer stack webhook ─────────────────────────────────────
+      # Portainer CE stack webhooks re-pull the git repo and redeploy.
+      # docker-compose.yml uses pull_policy: always so the new image is fetched.
+      - name: Trigger Portainer redeploy
+        run: |
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -X POST "${{ secrets.PORTAINER_WEBHOOK_URL }}")
+          echo "Portainer webhook status: $STATUS"
+          if [ "$STATUS" != "200" ] && [ "$STATUS" != "204" ]; then
+            echo "Webhook call failed with HTTP $STATUS"
+            exit 1
+          fi

@@ -1,0 +1,28 @@
+services:
+  dc-metro:
+    image: ghcr.io/pradhyuman-yadav/dc-metro:latest
+    # Always re-pull the image on deploy — works in Portainer CE without the
+    # "Re-pull image" Business Edition feature.
+    pull_policy: always
+    ports:
+      - "3009:3009"
+    volumes:
+      - dc-metro-data:/app/data
+    environment:
+      - NODE_ENV=production
+      - NEXT_TELEMETRY_DISABLED=1
+      - PORT=3009
+      - HOSTNAME=0.0.0.0
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3009/api/subway/trains"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+volumes:
+  # Declare as external so Docker reuses the existing named volume
+  # (preserves SQLite simulation state across redeploys).
+  dc-metro-data:
+    external: true
