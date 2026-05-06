@@ -8,6 +8,7 @@ export default defineConfig({
     environment: 'jsdom',
     setupFiles: ['./vitest.setup.ts'],
     globals: true,
+    exclude: ['**/node_modules/**', '**/.claude/worktrees/**'],
     coverage: {
       provider: 'v8',
       include: ['app/**', 'components/**', 'hooks/**', 'lib/**'],

@@ -11,7 +11,7 @@ import type { SurgeEvent, ConnectionStatus } from "@/hooks/useSimulation";
 function useMobile(): boolean {
   const [isMobile, setIsMobile] = useState(false);
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 640px)");
+    const mq = window.matchMedia("(max-width: 1024px)");
     setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener("change", handler);
